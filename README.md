@@ -113,9 +113,18 @@ Config:        /home/you/Code/my-new-app/.env
 
 ### Updating after a git push
 
+Match the update command to how you installed:
+
 ```bash
+# Base install (no Cognee)
 pipx reinstall shellie
 # or: pipx install --force git+https://github.com/sopuru-ani/shellie.git
+
+# Installed with the Cognee extra
+pipx install --force "shellie[cognee] @ git+https://github.com/sopuru-ani/shellie.git"
+
+# Base install + inject — reinstall keeps injects; after a plain --force install, re-inject:
+pipx inject shellie cognee
 ```
 
 ---
