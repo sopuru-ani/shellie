@@ -312,3 +312,15 @@ The `hosted_vllm/` prefix on `COGNEE_LLM_MODEL` tells LiteLLM to use your endpoi
 ## Dependencies
 
 LangChain, LangGraph (SQLite checkpointer), DuckDuckGo search, Wikipedia, python-dotenv, pydantic. Optional: **Cognee** via `shellie[cognee]`. LLM backend is any OpenAI-compatible API (NVIDIA NIM, Ollama, etc.) configured in the **project's** `.env`.
+
+---
+
+## Uninstall
+
+If you installed with pipx and want to remove Shellie:
+
+```bash
+pipx uninstall shellie
+```
+
+This removes the CLI and its pipx environment only. It does **not** delete project `.agent/` folders or device memory under `~/.config/shellie` — remove those yourself if you want them gone.
