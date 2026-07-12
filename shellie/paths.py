@@ -19,7 +19,7 @@ def find_project_root(start: Path | None = None) -> Path:
 
 
 def project_agent_dir(project_root: Path | None = None) -> Path:
-    return (project_root or find_project_root()) / ".agent"
+    return (project_root or find_project_root()) / ".shellie"
 
 
 def project_session_db(project_root: Path | None = None) -> Path:
@@ -35,7 +35,7 @@ def device_cognee_dir() -> Path:
 
 
 def ensure_agent_dirs(project_root: Path | None = None) -> Path:
-    """Create .agent/ in the project and device config dirs; return project root."""
+    """Create .shellie/ in the project and device config dirs; return project root."""
     root = project_root or find_project_root()
     project_agent_dir(root).mkdir(parents=True, exist_ok=True)
     project_cognee_dir(root).mkdir(parents=True, exist_ok=True)

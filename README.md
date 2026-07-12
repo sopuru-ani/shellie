@@ -78,7 +78,7 @@ Type `/bye` to quit.
 
 ### 3. Use it in any project
 
-Each project gets its own `.env` and `.agent/` data. The install step above is **not** repeated per project.
+Each project gets its own `.env` and `.shellie/` data. The install step above is **not** repeated per project.
 
 ```bash
 cd ~/Code/my-new-app          # Windows: cd C:\Users\You\Code\my-new-app
@@ -179,7 +179,7 @@ Put `.env` in the **project root** where you run `shellie` (git root or launch d
 
 Optional device-wide defaults: `~/.config/shellie/.env` on Linux/macOS (overridden by the project `.env`).
 
-Add `.agent/` to each project's `.gitignore` — it holds session and Cognee project memory.
+Add `.shellie/` to each project's `.gitignore` — it holds session and Cognee project memory.
 
 ### Optional Cognee (two layers)
 
@@ -230,8 +230,8 @@ Three tiers, keyed automatically from the directory you launch in:
 
 | Tier | Storage | Purpose |
 |------|---------|---------|
-| **Session** | `.agent/session.sqlite` | Full chat history for this project |
-| **Project (Cognee)** | `.agent/cognee/` | Durable facts about this repo |
+| **Session** | `.shellie/session.sqlite` | Full chat history for this project |
+| **Project (Cognee)** | `.shellie/cognee/` | Durable facts about this repo |
 | **Device (Cognee)** | `~/.config/shellie/cognee/` | Machine-wide facts (OS, tools, preferences) |
 
 - One session per project folder; survives restart until `/clear`.
@@ -304,7 +304,7 @@ The `hosted_vllm/` prefix on `COGNEE_LLM_MODEL` tells LiteLLM to use your endpoi
 ├── shellie/
 │   ├── cli.py           # `shellie` entry point
 │   ├── config.py        # Per-project .env loading
-│   ├── paths.py         # Project root detection, .agent/ paths
+│   ├── paths.py         # Project root detection, .shellie/ paths
 │   ├── agent.py         # LangChain agent + system prompt
 │   ├── tools.py         # Shell, files, search, memory tools
 │   ├── session_memory.py
@@ -332,4 +332,4 @@ If you installed with pipx and want to remove Shellie:
 pipx uninstall shellie
 ```
 
-This removes the CLI and its pipx environment only. It does **not** delete project `.agent/` folders or device memory under `~/.config/shellie` — remove those yourself if you want them gone.
+This removes the CLI and its pipx environment only. It does **not** delete project `.shellie/` folders or device memory under `~/.config/shellie` — remove those yourself if you want them gone.
