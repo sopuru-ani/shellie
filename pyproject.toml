@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shellie"
+version = "0.1.0"
+description = "Shellie — local CLI assistant for shell, files, and research, with session and Cognee memory."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain",
+    "langchain-community",
+    "langchain-openai",
+    "langchain-anthropic",
+    "wikipedia",
+    "ddgs",
+    "langgraph-checkpoint-sqlite",
+    "python-dotenv",
+    "pydantic",
+]
+
+[project.optional-dependencies]
+cognee = ["cognee"]
+
+[project.scripts]
+shellie = "shellie.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shellie*"]

@@ -1,0 +1,27 @@
+# Python project boilerplate
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Virtual environment
+venv/
+.env
+
+# Data files (commonly excluded unless needed in repo)
+data/
+
+# Per-project agent state (session DB, Cognee project memory)
+.agent/
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# Legacy / local-only
+old/
+
+# Miscellaneous
