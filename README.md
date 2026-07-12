@@ -114,7 +114,7 @@ Config:        /home/you/Code/my-new-app/.env
 ### Updating after a git push
 
 ```bash
-pipx reinstall shellie --force
+pipx reinstall shellie
 # or: pipx install --force git+https://github.com/sopuru-ani/shellie.git
 ```
 
