@@ -13,7 +13,7 @@ def find_project_root(start: Path | None = None) -> Path:
         if (current / ".git").is_dir():
             return current
         parent = current.parent
-        if parent == current:
+        if parent == current or parent == Path.home().resolve():
             return start
         current = parent
 
