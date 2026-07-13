@@ -256,7 +256,7 @@ def build_agent(project_root: Path):
         model=os.getenv("LLM_MODEL"),
         api_key=os.getenv("LLM_API_KEY"),
         base_url=os.getenv("LLM_ENDPOINT"),
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=0.2,
     )
 
