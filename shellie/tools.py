@@ -113,7 +113,18 @@ def _format_shell_result(command: str, output: str, exit_code: int) -> str:
         f"exit_code: {exit_code}",
     ]
     if output:
-        parts.append(f"output:\n{output.rstrip()}")
+        lines = output.splitlines()
+        if len(lines) > 150:
+            head = "\n".join(lines[:75])
+            tail = "\n".join(lines[-75:])
+            parts.append(
+                f"output (truncated: showing 150 of {len(lines)} lines):\n"
+                f"{head}\n...\n{tail}\n\n"
+                "Do not treat this as the full file/listing. For complete data, "
+                "write it to disk with a shell redirect, or read/summarize a smaller slice."
+            )
+        else:
+            parts.append(f"output:\n{output.rstrip()}")
     else:
         parts.append("(no output)")
     parts.append(f"command:\n{command}")
