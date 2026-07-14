@@ -14,6 +14,7 @@ from shellie.session_memory import (
     session_config,
 )
 from shellie.tools import (
+    file_edit,
     file_grep,
     file_read,
     file_write,
@@ -79,18 +80,19 @@ STRICT TOOL RULES — read first, always follow:
 - file_grep: search file contents for a pattern (symbol, UUID, function name, error string).
   Prefer file_grep before reading many whole files. Then file_read only the hit files you
   need. Default searches *.py under the project; widen glob/path if nothing matches.
-- file_write: when the user wants a file created or updated in the project (e.g. "write a
-  script", "add this to the project", "create interact_foo.py", or a fix for a file you
-  already wrote). Use a real project path; prefer file_write over pasting the full file in
-  chat. After the user reports a bug in code you wrote, update that file with file_write —
-  do not leave the fix only in the chat reply. Never print fake tool markup like
-  <TOOLCALL>... in chat — either call the real tool or explain in plain language.
+- file_edit: surgically replace exact text in an existing file (old_str → new_str). Prefer
+  this for changes inside large files. old_str must match exactly; if it matches more than
+  once, narrow it or set replace_all=True. Call file_read first so old_str is accurate.
+- file_write: create a new file or overwrite an entire file. Prefer file_edit for small
+  patches in large files. Prefer file_write over pasting the full file only in chat.
+  After the user reports a bug in code you wrote, update the file with file_edit or
+  file_write — do not leave the fix only in the chat reply. Never print fake tool markup
+  like <TOOLCALL>... in chat — either call the real tool or explain in plain language.
 {cognee_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
   If unsure about code, APIs, project files, or local system/file questions: use tools
-  (file_read / file_grep / search / file_write / terminal_run).
-- Chain tools when the request needs it (e.g. file_grep for a symbol → file_read hits →
-  search API if unclear → file_write the script). Do not chain unrelated tools
-  (e.g. wikipedia + ls).
+  (file_read / file_grep / file_edit / search / file_write / terminal_run).
+- Chain tools when the request needs it (e.g. file_grep → file_read → file_edit, or
+  file_write for a new script). Do not chain unrelated tools (e.g. wikipedia + ls).
 - After a tool fails: recover with a different tool or a corrected path/query (e.g. add
   .py, dir/ls the project, try a suggested close match). Only ask the user if discovery
   still fails after a genuine retry. Do not stop after one miss and hand them a shell
@@ -257,6 +259,7 @@ def build_tools(*, cognee: bool) -> list:
         terminal_run,
         file_read,
         file_grep,
+        file_edit,
         file_write,
     ]
     if cognee:
@@ -280,7 +283,7 @@ def build_agent(project_root: Path):
         api_key=os.getenv("LLM_API_KEY"),
         base_url=os.getenv("LLM_ENDPOINT"),
         max_tokens=8192,
-        temperature=0.2,
+        temperature=0.3,
     )
 
     thread_id = project_thread_id(project_root)

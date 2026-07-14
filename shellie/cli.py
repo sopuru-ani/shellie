@@ -108,7 +108,7 @@ def run_repl(project_root: Path) -> None:
         reply = _latest_reply(final_state["messages"][prev_count:])
         if reply:
             agent_reply_start()
-            print(reply)
+            print(reply + "\n" + "-reply end" + "-"*50 + "\n")
 
 
 def main() -> None:

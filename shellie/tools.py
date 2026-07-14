@@ -384,10 +384,71 @@ def file_grep(
 
 @tool
 def file_write(filepath: str, content: str) -> str:
-    """Write to a file and return the output. This uses the Pathlib library to write to the file."""
+    """Create or overwrite a whole file. Prefer file_edit for small changes in large files."""
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
     return f"File {filepath} successfully written."
+
+
+@tool
+def file_edit(
+    filepath: str,
+    old_str: str,
+    new_str: str,
+    replace_all: bool = False,
+) -> str:
+    """Replace an exact text snippet in an existing file (surgical edit).
+
+    Pass old_str/new_str as single strings (may include newlines for a whole function or whole block of code).
+    old_str must match the file exactly. If it appears more than once, either make old_str more unique or set replace_all=True. Prefer this over file_write for large files;
+    use file_write to create new files or rewrite everything."""
+    path = Path(filepath)
+    if not path.is_file():
+        resolved = _resolve_readable_path(filepath)
+        if resolved is None:
+            return (
+                f"Error: {filepath!r} not found. file_read or list the project, "
+                "then retry file_edit with the real path."
+            )
+        path = resolved
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: {path} looks binary and cannot be edited as text."
+    except OSError as exc:
+        return f"Error reading {path}: {exc}"
+
+    if old_str == "":
+        return "Error: old_str must not be empty."
+    if old_str == new_str:
+        return "Error: old_str and new_str are identical; nothing to change."
+
+    count = content.count(old_str)
+    if count == 0:
+        return (
+            f"Error: old_str not found in {path}. "
+            "file_read the file and copy the exact text to replace (whitespace matters)."
+        )
+    if count > 1 and not replace_all:
+        return (
+            f"Error: old_str found {count} times in {path}. "
+            "Narrow old_str so it is unique, or pass replace_all=True."
+        )
+
+    if replace_all:
+        updated = content.replace(old_str, new_str)
+        replaced = count
+    else:
+        updated = content.replace(old_str, new_str, 1)
+        replaced = 1
+
+    try:
+        path.write_text(updated, encoding="utf-8")
+    except OSError as exc:
+        return f"Error writing {path}: {exc}"
+
+    return f"Updated {path}: replaced {replaced} occurrence(s)."
 
 
 @tool
