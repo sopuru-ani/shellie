@@ -168,11 +168,97 @@ def terminal_run(command: str) -> str:
     return _format_shell_result(command, output, exit_code)
 
 
+_COMMON_FILE_EXTENSIONS = (".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml", ".ini")
+
+
+def _close_file_matches(requested: Path, limit: int = 8) -> list[Path]:
+    """Find same-dir / cwd files whose names look like the requested path."""
+    stem = requested.name
+    stem_lower = stem.casefold()
+    stem_no_ext = requested.stem.casefold()
+    search_dirs: list[Path] = []
+    parent = requested.parent
+    if str(parent) in ("", "."):
+        search_dirs.append(Path.cwd())
+    else:
+        if parent.is_dir():
+            search_dirs.append(parent)
+        search_dirs.append(Path.cwd())
+
+    matches: list[Path] = []
+    seen: set[str] = set()
+    for directory in search_dirs:
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            key = str(entry.resolve()) if entry.exists() else str(entry)
+            if key in seen:
+                continue
+            name_lower = entry.name.casefold()
+            if (
+                name_lower == stem_lower
+                or name_lower.startswith(stem_lower)
+                or entry.stem.casefold() == stem_no_ext
+                or stem_lower in name_lower
+            ):
+                seen.add(key)
+                matches.append(entry)
+                if len(matches) >= limit:
+                    return matches
+    return matches
+
+
+def _resolve_readable_path(filepath: str) -> Path | None:
+    """Resolve filepath, trying common extensions when the exact path is missing."""
+    path = Path(filepath)
+    if path.is_file():
+        return path
+    if path.suffix:
+        return None
+    for ext in _COMMON_FILE_EXTENSIONS:
+        candidate = Path(str(filepath) + ext)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 @tool
 def file_read(filepath: str) -> str:
-    """Read the contents of a file and return the output. This uses the Pathlib library to read the file."""
-    with open(filepath, "r", encoding="utf-8") as f:
-        return f.read()
+    """Read a text file. Pass a real project path (e.g. interact_moveb2505.py).
+
+    If the exact path is missing, tries common extensions (.py, .md, ...) and reports
+    close filename matches in the same folder so you can retry — do not ask the user
+    to find the file yourself."""
+    path = _resolve_readable_path(filepath)
+    if path is not None:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return (
+                f"Error: {path} looks like a binary file and cannot be read as text."
+            )
+        except OSError as exc:
+            return f"Error reading {path}: {exc}"
+        if path.name != Path(filepath).name and str(path) != filepath:
+            return f"[resolved {filepath!r} → {path}]\n\n{content}"
+        return content
+
+    requested = Path(filepath)
+    matches = _close_file_matches(requested)
+    if matches:
+        listed = "\n".join(f"  - {m}" for m in matches)
+        return (
+            f"Error: {filepath!r} not found.\n"
+            f"Close matches (retry file_read with one of these):\n{listed}"
+        )
+    return (
+        f"Error: {filepath!r} not found. List the project with terminal_run "
+        f"(dir / ls) and retry file_read with the correct path — do not ask the user."
+    )
 
 
 @tool
