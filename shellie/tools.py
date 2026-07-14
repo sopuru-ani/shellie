@@ -1,3 +1,4 @@
+import fnmatch
 import platform
 import re
 from datetime import datetime
@@ -259,6 +260,126 @@ def file_read(filepath: str) -> str:
         f"Error: {filepath!r} not found. List the project with terminal_run "
         f"(dir / ls) and retry file_read with the correct path — do not ask the user."
     )
+
+
+_GREP_SKIP_DIRS = {
+    ".git",
+    ".svn",
+    ".hg",
+    ".shellie",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    "dist",
+    "build",
+    ".tox",
+}
+_GREP_MAX_MATCHES = 50
+_GREP_MAX_CHARS = 8000
+
+
+def _grep_paths(root: Path, glob: str):
+    if root.is_file():
+        yield root
+        return
+    if not root.is_dir():
+        return
+
+    def allow_dir(path: Path) -> bool:
+        return path.name not in _GREP_SKIP_DIRS and not (
+            path.name.startswith(".") and path.name not in (".",)
+        )
+
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                if allow_dir(entry):
+                    stack.append(entry)
+                continue
+            if not entry.is_file():
+                continue
+            if glob != "*" and not fnmatch.fnmatch(entry.name, glob):
+                continue
+            yield entry
+
+
+@tool
+def file_grep(
+    pattern: str,
+    path: str = ".",
+    glob: str = "*.py",
+    ignore_case: bool = False,
+) -> str:
+    """Search file contents for a regex/text pattern. Returns path:line: matching text.
+
+    Use to find symbols, UUIDs, function names, or error strings before reading whole
+    files. Default glob is *.py; set glob='*' for all text files. path defaults to the
+    current project directory. Results are capped; narrow path/glob if truncated."""
+    root = Path(path)
+    if not root.exists():
+        return (
+            f"Error: path {path!r} not found. List the project with terminal_run "
+            "and retry file_grep with a real path."
+        )
+
+    flags = re.IGNORECASE if ignore_case else 0
+    try:
+        regex = re.compile(pattern, flags)
+    except re.error as exc:
+        return f"Error: invalid regex pattern {pattern!r}: {exc}"
+
+    hits: list[str] = []
+    files_scanned = 0
+    truncated = False
+
+    for file_path in _grep_paths(root, glob):
+        files_scanned += 1
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            rel = file_path.relative_to(Path.cwd())
+        except ValueError:
+            rel = file_path
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if regex.search(line):
+                hits.append(f"{rel}:{line_no}: {line.rstrip()}")
+                if len(hits) >= _GREP_MAX_MATCHES:
+                    truncated = True
+                    break
+        if truncated:
+            break
+
+    if not hits:
+        return (
+            f"No matches for {pattern!r} under {path!r} (glob={glob!r}, "
+            f"files_scanned={files_scanned}). Try a broader glob, different path, "
+            "or ignore_case=true."
+        )
+
+    body = "\n".join(hits)
+    header = f"matches: {len(hits)} (files_scanned={files_scanned}"
+    if truncated:
+        header += f", truncated at {_GREP_MAX_MATCHES} hits"
+    header += ")\n"
+    result = header + body
+    if len(result) > _GREP_MAX_CHARS:
+        result = (
+            result[:_GREP_MAX_CHARS]
+            + f"\n\n... truncated to {_GREP_MAX_CHARS} characters. "
+            "Narrow path/glob or pattern and search again."
+        )
+    return result
 
 
 @tool

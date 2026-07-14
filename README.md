@@ -255,6 +255,7 @@ Quit with `/bye`, restart, and ask about your package manager. If it recalls the
 |------|-----|
 | `terminal_run` | Non-interactive shell commands (persistent shell, venv stripped from PATH) |
 | `file_read` / `file_write` | Read or write project files |
+| `file_grep` | Search file contents (pattern + optional path/glob) |
 | `search` / `wikipedia` | External lookup when needed |
 | `remember_*` / `recall_*` | Long-term Cognee memory |
 

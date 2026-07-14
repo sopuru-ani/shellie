@@ -14,6 +14,7 @@ from shellie.session_memory import (
     session_config,
 )
 from shellie.tools import (
+    file_grep,
     file_read,
     file_write,
     recall_device,
@@ -75,6 +76,9 @@ STRICT TOOL RULES — read first, always follow:
   reference for new code (e.g. "read scan_ble.py"), call file_read first. If file_read
   fails or returns close-match suggestions, retry with the suggested path or list the
   directory with terminal_run — do not give up and ask the user to find the file.
+- file_grep: search file contents for a pattern (symbol, UUID, function name, error string).
+  Prefer file_grep before reading many whole files. Then file_read only the hit files you
+  need. Default searches *.py under the project; widen glob/path if nothing matches.
 - file_write: when the user wants a file created or updated in the project (e.g. "write a
   script", "add this to the project", "create interact_foo.py", or a fix for a file you
   already wrote). Use a real project path; prefer file_write over pasting the full file in
@@ -83,9 +87,10 @@ STRICT TOOL RULES — read first, always follow:
   <TOOLCALL>... in chat — either call the real tool or explain in plain language.
 {cognee_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
   If unsure about code, APIs, project files, or local system/file questions: use tools
-  (file_read / search / file_write / terminal_run).
-- Chain tools when the request needs it (e.g. file_read related source → search API if
-  unclear → file_write the script). Do not chain unrelated tools (e.g. wikipedia + ls).
+  (file_read / file_grep / search / file_write / terminal_run).
+- Chain tools when the request needs it (e.g. file_grep for a symbol → file_read hits →
+  search API if unclear → file_write the script). Do not chain unrelated tools
+  (e.g. wikipedia + ls).
 - After a tool fails: recover with a different tool or a corrected path/query (e.g. add
   .py, dir/ls the project, try a suggested close match). Only ask the user if discovery
   still fails after a genuine retry. Do not stop after one miss and hand them a shell
@@ -144,8 +149,8 @@ Understanding the project or codebase:
   Do not summarize code you have not read. Do not ask them to paste code you can read.
 - If you have only listed a directory, say what you know from that and what you still
   need to read — do not invent architecture, line counts, or behavior.
-- Prefer file_read for source code; use terminal_run for git status, wc -l, dir/ls, and
-  similar.
+- Prefer file_read for source code; use file_grep to locate symbols across files; use
+  terminal_run for git status, wc -l, dir/ls, and similar.
 
 Interactive commands — never run via terminal_run:
 terminal_run cannot handle programs that need keyboard input (login wizards, ssh sessions,
@@ -251,6 +256,7 @@ def build_tools(*, cognee: bool) -> list:
         wikipedia_tool,
         terminal_run,
         file_read,
+        file_grep,
         file_write,
     ]
     if cognee:
