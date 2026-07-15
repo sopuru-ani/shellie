@@ -15,7 +15,14 @@ from shellie.cognee_memory import (
     remember_project as _remember_project,
 )
 from shellie.shell import get_shell
-from shellie.ui import confirm_prompt, confirm_sensitive, shell_blocked, shell_done, shell_running
+from shellie.ui import (
+    confirm_prompt,
+    confirm_sensitive,
+    shell_blocked,
+    shell_done,
+    shell_running,
+    working_show,
+)
 
 INTERACTIVE_COMMAND_PATTERNS = [
     re.compile(r"\bgh\s+auth\s+(login|refresh)\b", re.I),
@@ -88,6 +95,8 @@ def _interactive_block_message(command: str) -> str:
 def _confirm_sensitive_command(command: str) -> bool:
     confirm_sensitive(command)
     answer = input(confirm_prompt()).strip().lower()
+    # Resume sticky status after the interactive prompt.
+    working_show()
     return answer == "yes"
 
 
