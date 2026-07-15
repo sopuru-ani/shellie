@@ -27,22 +27,26 @@ def _c(code: str, text: str) -> str:
 
 
 def working_show() -> None:
-    """Draw the sticky status on the current line (TTY only)."""
+    """Draw a blank separator line, then purple status (TTY only)."""
     global _working_visible
     if not _use_color():
         return
-    sys.stdout.write(_c(_PURPLE, _WORKING_LABEL))
+    # Leading newline = empty line above the status so it doesn't sit on tool output.
+    sys.stdout.write("\n" + _c(_PURPLE, _WORKING_LABEL))
     sys.stdout.flush()
     _working_visible = True
 
 
 def working_clear() -> None:
-    """Erase the sticky status line if it is showing (TTY only)."""
+    """Erase the status line and the blank separator above it (TTY only)."""
     global _working_visible
     if not _working_visible:
         return
     if _use_color():
-        sys.stdout.write("\r\033[K")
+        # Cursor sits on the status line (no trailing newline after show).
+        sys.stdout.write("\r\033[2K")  # clear status line
+        sys.stdout.write("\033[1A\r\033[2K")  # up to blank separator, clear it
+        sys.stdout.write("\033[0J")  # drop any leftover empty line below
         sys.stdout.flush()
     _working_visible = False
 
@@ -98,7 +102,7 @@ def agent_reply_start() -> None:
 
 
 def agent_reply_end() -> None:
-    print(_c(_DIM, "\n── reply end" + "─" * 52))
+    print(_c(_DIM, "── reply end" + "─" * 52))
 
 
 def format_tool_args(args: dict) -> str:
