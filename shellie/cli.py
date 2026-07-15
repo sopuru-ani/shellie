@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
 from shellie.agent import build_agent
 from shellie.cognee_memory import cognee_status_message, init_cognee_memory
@@ -34,6 +34,17 @@ def _print_stream_updates(event: dict) -> bool:
     return saw_tool
 
 
+def _is_ai_stream_token(token) -> bool:
+    """True only for model tokens — never ToolMessage / tool result payloads."""
+    if isinstance(token, AIMessageChunk):
+        return True
+    # Rare: some stacks emit a full AIMessage on the messages channel.
+    if isinstance(token, AIMessage):
+        return True
+    name = type(token).__name__
+    return name in ("AIMessageChunk", "AIMessage")
+
+
 def _chunk_text(content) -> str:
     """Normalize AIMessageChunk.content to a printable string."""
     if content is None:
@@ -56,11 +67,15 @@ def _chunk_text(content) -> str:
 
 
 def _latest_reply(new_messages: list) -> str | None:
+    """Last assistant text that is not a tool-calling step."""
     for msg in reversed(new_messages):
-        if isinstance(msg, AIMessage) and msg.content:
-            text = _chunk_text(msg.content)
-            if text:
-                return text
+        if not isinstance(msg, AIMessage):
+            continue
+        if getattr(msg, "tool_calls", None):
+            continue
+        text = _chunk_text(msg.content)
+        if text:
+            return text
     return None
 
 
@@ -162,6 +177,10 @@ def run_repl(project_root: Path) -> None:
                         tools_used = True
                 elif mode == "messages":
                     token, _metadata = payload
+                    # Tool results also arrive on this channel — never print them.
+                    if not _is_ai_stream_token(token):
+                        continue
+
                     tid = getattr(token, "id", None)
                     if tid != msg_id:
                         # Previous model call finished. If it had no tools, that text is the answer

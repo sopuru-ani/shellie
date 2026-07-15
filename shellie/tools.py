@@ -236,15 +236,43 @@ def _resolve_readable_path(filepath: str) -> Path | None:
     return None
 
 
+_SECRET_NAME_MARKERS = (
+    ".env",
+    "credentials",
+    "secrets",
+    "id_rsa",
+    "id_ed25519",
+    ".pem",
+    ".key",
+)
+
+
+def _is_secret_path(filepath: str | Path) -> bool:
+    """Block env/credential files from file tools (defense in depth)."""
+    name = Path(filepath).name.casefold()
+    if name == ".env" or name.startswith(".env."):
+        return True
+    return any(marker in name for marker in _SECRET_NAME_MARKERS)
+
+
 @tool
 def file_read(filepath: str) -> str:
     """Read a text file. Pass a real project path (e.g. interact_moveb2505.py).
 
     If the exact path is missing, tries common extensions (.py, .md, ...) and reports
     close filename matches in the same folder so you can retry — do not ask the user
-    to find the file yourself."""
+    to find the file yourself. Refuses .env and other secret filenames."""
+    if _is_secret_path(filepath):
+        return (
+            f"Error: refusing to read {filepath!r} — looks like a secrets/env file. "
+            "Do not read or paste API keys; ask the user to configure .env themselves."
+        )
     path = _resolve_readable_path(filepath)
     if path is not None:
+        if _is_secret_path(path):
+            return (
+                f"Error: refusing to read {path} — looks like a secrets/env file."
+            )
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -394,6 +422,10 @@ def file_grep(
 @tool
 def file_write(filepath: str, content: str) -> str:
     """Create or overwrite a whole file. Prefer file_edit for small changes in large files."""
+    if _is_secret_path(filepath):
+        return (
+            f"Error: refusing to write {filepath!r} — looks like a secrets/env file."
+        )
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
     return f"File {filepath} successfully written."
@@ -411,6 +443,10 @@ def file_edit(
     Pass old_str/new_str as single strings (may include newlines for a whole function or whole block of code).
     old_str must match the file exactly. If it appears more than once, either make old_str more unique or set replace_all=True. Prefer this over file_write for large files;
     use file_write to create new files or rewrite everything."""
+    if _is_secret_path(filepath):
+        return (
+            f"Error: refusing to edit {filepath!r} — looks like a secrets/env file."
+        )
     path = Path(filepath)
     if not path.is_file():
         resolved = _resolve_readable_path(filepath)
@@ -420,6 +456,8 @@ def file_edit(
                 "then retry file_edit with the real path."
             )
         path = resolved
+    if _is_secret_path(path):
+        return f"Error: refusing to edit {path} — looks like a secrets/env file."
 
     try:
         content = path.read_text(encoding="utf-8")
