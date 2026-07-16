@@ -67,9 +67,48 @@ SENSITIVE_COMMAND_PATTERNS = [
     re.compile(r"(curl|wget).*\|\s*(ba)?sh", re.I),
 ]
 
+# Editing project source via the shell (PowerShell -replace, >>, sed -i, …).
+# Use file_edit / file_write instead — shell edits caused corrupt HTML and step-limit loops.
+_SOURCE_EXT = (
+    r"py|js|ts|tsx|jsx|mjs|cjs|html|htm|css|scss|json|md|txt|toml|ya?ml|rs|go|"
+    r"java|c|cc|cpp|h|hpp|cs|vue|svelte|php|rb|sh|ps1|xml|svg"
+)
+SOURCE_EDIT_VIA_SHELL_PATTERNS = [
+    re.compile(r"\bSet-Content\b", re.I),
+    re.compile(r"\bAdd-Content\b", re.I),
+    re.compile(r"\bOut-File\b", re.I),
+    re.compile(r"\bClear-Content\b", re.I),
+    re.compile(r"\bsed\b[^\n]*\s-i\b", re.I),
+    re.compile(r"\bperl\b[^\n]*\s-i\b", re.I),
+    re.compile(rf">>\s*[\"']?[^\s\"'|<>]+\.(?:{_SOURCE_EXT})\b", re.I),
+    # Redirect write to a source file (not 2> stderr).
+    re.compile(rf"(?<![0-9])>\s*[\"']?[^\s\"'|<>]+\.(?:{_SOURCE_EXT})\b", re.I),
+    re.compile(
+        rf"\btee\b[^\n]*\.(?:{_SOURCE_EXT})\b",
+        re.I,
+    ),
+]
+
 
 def _is_sensitive_command(command: str) -> bool:
     return any(pattern.search(command) for pattern in SENSITIVE_COMMAND_PATTERNS)
+
+
+def _is_source_edit_via_shell(command: str) -> bool:
+    return any(pattern.search(command) for pattern in SOURCE_EDIT_VIA_SHELL_PATTERNS)
+
+
+def _source_edit_block_message(command: str) -> str:
+    return (
+        "exit_code: blocked\n\n"
+        "Command not run: do not edit project source files via terminal_run "
+        "(Set-Content, Add-Content, >>, sed -i, etc.).\n"
+        "Use file_edit with filepath, old_str, and new_str (exact text replace), "
+        "or file_write only for a new file / explicit full rewrite.\n"
+        "If file_edit failed, retry file_edit with the correct argument names — "
+        "do not fall back to PowerShell -replace.\n\n"
+        f"command:\n{command}"
+    )
 
 
 def _is_interactive_command(command: str) -> bool:
@@ -153,10 +192,17 @@ def terminal_run(command: str) -> str:
     tell the user to run those in their own terminal.
 
     Sensitive commands (git push, rm, sudo, package installs, etc.) are blocked
-    until the user types 'yes' at an interactive prompt."""
+    until the user types 'yes' at an interactive prompt.
+
+    Do NOT use this to edit source files (no Set-Content, Add-Content, >>, sed -i).
+    Use file_edit or file_write for code changes."""
     if _is_interactive_command(command):
         shell_blocked("interactive", command)
         return _interactive_block_message(command)
+
+    if _is_source_edit_via_shell(command):
+        shell_blocked("source-edit", command)
+        return _source_edit_block_message(command)
 
     if _is_sensitive_command(command) and not _confirm_sensitive_command(command):
         shell_blocked("denied", command)
@@ -461,16 +507,29 @@ def file_write(filepath: str, content: str) -> str:
 @tool
 def file_edit(
     filepath: str,
-    old_str: str,
-    new_str: str,
+    old_str: str | None = None,
+    new_str: str | None = None,
     replace_all: bool = False,
+    find: str | None = None,
+    replace: str | None = None,
 ) -> str:
     """Replace an exact text snippet in an existing file (surgical edit).
 
-    Prefer this over file_write whenever the file already exists. Pass old_str/new_str as
-    single strings (may include newlines for a whole function or block). old_str must match
-    the file exactly. If it appears more than once, narrow old_str or set replace_all=True.
-    Use file_write only to create new files or when the user asks for a full rewrite."""
+    Required: filepath, old_str, new_str (exact match including whitespace).
+    Aliases: find → old_str, replace → new_str (prefer old_str/new_str).
+    Prefer this over file_write when the file already exists. If old_str matches more
+    than once, narrow it or set replace_all=True. Never use terminal_run / PowerShell
+    to edit source — retry file_edit with correct args instead."""
+    if old_str is None and find is not None:
+        old_str = find
+    if new_str is None and replace is not None:
+        new_str = replace
+    if old_str is None or new_str is None:
+        return (
+            "Error: file_edit requires filepath, old_str, and new_str. "
+            "Aliases find→old_str and replace→new_str are accepted. "
+            "Do not invent other names. Never use terminal_run to edit the file."
+        )
     if _is_secret_path(filepath):
         return (
             f"Error: refusing to edit {filepath!r} — looks like a secrets/env file."
@@ -495,7 +554,10 @@ def file_edit(
         return f"Error reading {path}: {exc}"
 
     if old_str == "":
-        return "Error: old_str must not be empty."
+        return (
+            "Error: old_str must not be empty. Pass the exact text to replace as old_str "
+            "(alias: find)."
+        )
     if old_str == new_str:
         return "Error: old_str and new_str are identical; nothing to change."
 
@@ -503,7 +565,8 @@ def file_edit(
     if count == 0:
         return (
             f"Error: old_str not found in {path}. "
-            "file_read the file and copy the exact text to replace (whitespace matters)."
+            "file_read the file and copy the exact text to replace (whitespace matters). "
+            "Do not use terminal_run / PowerShell -replace as a workaround."
         )
     if count > 1 and not replace_all:
         return (
@@ -523,7 +586,12 @@ def file_edit(
     except OSError as exc:
         return f"Error writing {path}: {exc}"
 
-    return f"Updated {path}: replaced {replaced} occurrence(s)."
+    note = ""
+    if find is not None or replace is not None:
+        note = (
+            " (Note: prefer old_str/new_str next time; find/replace aliases worked.)"
+        )
+    return f"Updated {path}: replaced {replaced} occurrence(s).{note}"
 
 
 @tool
