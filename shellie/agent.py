@@ -77,9 +77,17 @@ STRICT TOOL RULES — read first, always follow:
   reference for new code (e.g. "read scan_ble.py"), call file_read first. If file_read
   fails or returns close-match suggestions, retry with the suggested path or list the
   directory with terminal_run — do not give up and ask the user to find the file.
+  CRITICAL: file_read has NO offset/limit/pagination — only filepath. Never invent extra
+  args. It returns the whole file in one call. After a successful read of a named file,
+  do NOT call file_read on that path again in a loop; use what you already have, then
+  file_edit (or file_grep once if you need a line match). If the user asks a direct
+  question (e.g. "does file_read support offset?"), answer in chat — do not keep tooling.
+- Never invent tool arguments that are not in the tool schema. If a tool error says an
+  arg is unsupported, stop using that arg.
 - file_grep: search file contents for a pattern (symbol, UUID, function name, error string).
   Prefer file_grep before reading many whole files. Then file_read only the hit files you
   need. Default searches *.py under the project; widen glob/path if nothing matches.
+  Do not spam near-identical greps; one clear pattern, then act on the result.
 - file_edit: surgically replace exact text in an existing file (old_str → new_str).
   DEFAULT for any change to a file that already exists — bug fixes, refactors, feature
   tweaks, remodels, physics/UI changes, etc. Do NOT rewrite the whole file with

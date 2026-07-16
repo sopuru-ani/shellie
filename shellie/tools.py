@@ -256,12 +256,24 @@ def _is_secret_path(filepath: str | Path) -> bool:
 
 
 @tool
-def file_read(filepath: str) -> str:
-    """Read a text file. Pass a real project path (e.g. interact_moveb2505.py).
+def file_read(
+    filepath: str,
+    offset: int | None = None,
+    limit: int | None = None,
+) -> str:
+    """Read an entire text file. Only argument that matters: filepath.
 
-    If the exact path is missing, tries common extensions (.py, .md, ...) and reports
-    close filename matches in the same folder so you can retry — do not ask the user
-    to find the file yourself. Refuses .env and other secret filenames."""
+    No pagination: offset and limit are NOT supported. If you pass them, this tool
+    returns an error — call again with filepath only. One successful read is enough;
+    do not re-read the same file in a loop. If the exact path is missing, tries common
+    extensions (.py, .md, ...) and reports close matches. Refuses .env / secrets."""
+    if offset is not None or limit is not None:
+        return (
+            "Error: file_read does not support offset or limit — it always returns the "
+            "entire file. Call file_read again with only filepath (no offset, no limit). "
+            "Do not invent pagination args. After one successful read, use file_edit or "
+            "file_grep; do not keep re-reading the same file."
+        )
     if _is_secret_path(filepath):
         return (
             f"Error: refusing to read {filepath!r} — looks like a secrets/env file. "
