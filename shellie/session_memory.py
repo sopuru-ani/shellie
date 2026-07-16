@@ -1,12 +1,18 @@
 """SQLite session persistence for chat history (LangGraph checkpointer)."""
 
 import hashlib
+import os
 import sqlite3
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from shellie.paths import project_session_db
+
+# Max graph steps per user turn (model call and tool round each count).
+# ~40 ≈ enough for a multi-file edit job; stops endless rewrite loops.
+# Override with AGENT_RECURSION_LIMIT. LangGraph default is 25 if unset here.
+DEFAULT_RECURSION_LIMIT = 40
 
 
 def project_thread_id(project_root: Path) -> str:
@@ -24,9 +30,21 @@ def open_session_checkpointer(project_root: Path) -> SqliteSaver:
     return checkpointer
 
 
-def session_config(thread_id: str) -> dict:
-    """LangGraph config dict — ties each conversation to one thread_id."""
-    return {"configurable": {"thread_id": thread_id}}
+def _recursion_limit(explicit: int | None = None) -> int:
+    if explicit is not None:
+        return explicit
+    raw = os.getenv("AGENT_RECURSION_LIMIT", "").strip()
+    if raw.isdigit():
+        return max(1, int(raw))
+    return DEFAULT_RECURSION_LIMIT
+
+
+def session_config(thread_id: str, *, recursion_limit: int | None = None) -> dict:
+    """LangGraph config — one thread_id plus a per-turn step cap."""
+    return {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": _recursion_limit(recursion_limit),
+    }
 
 
 def clear_session(checkpointer: SqliteSaver, thread_id: str) -> None:

@@ -14,6 +14,7 @@ _PURPLE = "\033[35m"
 
 _WORKING_LABEL = "shellie is working..."
 _working_visible = False
+_reply_active = False
 
 
 def _use_color() -> bool:
@@ -29,7 +30,7 @@ def _c(code: str, text: str) -> str:
 def working_show() -> None:
     """Draw a blank separator line, then purple status (TTY only)."""
     global _working_visible
-    if not _use_color():
+    if not _use_color() or _reply_active:
         return
     # Leading newline = empty line above the status so it doesn't sit on tool output.
     sys.stdout.write("\n" + _c(_PURPLE, _WORKING_LABEL))
@@ -97,11 +98,15 @@ def confirm_prompt() -> str:
 
 
 def agent_reply_start() -> None:
+    global _reply_active
     working_clear()
+    _reply_active = True
     print(_c(_DIM, "\n── reply " + "─" * 52))
 
 
 def agent_reply_end() -> None:
+    global _reply_active
+    _reply_active = False
     print(_c(_DIM, "── reply end" + "─" * 52))
 
 

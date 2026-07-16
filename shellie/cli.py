@@ -88,6 +88,32 @@ def _warn_missing_env(project_root: Path) -> None:
         )
 
 
+def _format_run_error(exc: BaseException) -> str:
+    """One-line user message for a failed agent turn (keeps the REPL alive)."""
+    text = str(exc).strip() or type(exc).__name__
+    first = text.splitlines()[0]
+    if len(first) > 200:
+        first = first[:197] + "..."
+    lowered = first.lower()
+    name = type(exc).__name__
+    if name == "GraphRecursionError" or "recursion limit" in lowered:
+        return (
+            f"Error: hit the step limit for this turn ({first}). "
+            "Send another message (e.g. continue) to keep going."
+        )
+    if (
+        "resourceexhausted" in lowered
+        or "rate limit" in lowered
+        or "429" in lowered
+        or "total request limit" in lowered
+    ):
+        return (
+            f"Error: provider rate/worker limit hit ({first}). "
+            "Try again in a moment."
+        )
+    return f"Error: {first}"
+
+
 def run_repl(project_root: Path) -> None:
     agent, session_config, checkpointer, thread_id = build_agent(project_root)
 
@@ -139,7 +165,9 @@ def run_repl(project_root: Path) -> None:
 
         final_state = None
         # Token stream bookkeeping: only show the user-facing answer, not tool-planning calls.
-        tools_used = False
+        # Hold every model text chunk until that message finishes without tool calls — including
+        # after earlier tool rounds. Streaming mid-message used to open ── reply ── while the
+        # agent was still about to call more tools.
         reply_open = False
         msg_id = None
         msg_is_tool = False
@@ -155,6 +183,8 @@ def run_repl(project_root: Path) -> None:
         def write_reply(text: str) -> None:
             if not text:
                 return
+            # Clear again in case tool activity restored the status after reply opened.
+            working_clear()
             open_reply()
             print(text, end="", flush=True)
 
@@ -165,6 +195,7 @@ def run_repl(project_root: Path) -> None:
             pending_text = []
 
         working_show()
+        run_error: str | None = None
         try:
             for chunk in agent.stream(
                 {"messages": [HumanMessage(content=query)]},
@@ -173,8 +204,7 @@ def run_repl(project_root: Path) -> None:
             ):
                 mode, payload = chunk
                 if mode == "updates":
-                    if _print_stream_updates(payload):
-                        tools_used = True
+                    _print_stream_updates(payload)
                 elif mode == "messages":
                     token, _metadata = payload
                     # Tool results also arrive on this channel — never print them.
@@ -184,7 +214,7 @@ def run_repl(project_root: Path) -> None:
                     tid = getattr(token, "id", None)
                     if tid != msg_id:
                         # Previous model call finished. If it had no tools, that text is the answer
-                        # (e.g. casual chat with zero tools).
+                        # (casual chat, or the final message after a tool loop).
                         if msg_id is not None and not msg_is_tool:
                             flush_pending()
                         msg_id = tid
@@ -202,20 +232,27 @@ def run_repl(project_root: Path) -> None:
                     if not text or msg_is_tool:
                         continue
 
-                    if tools_used:
-                        # Post-tool model call → stream tokens live as the final answer.
-                        write_reply(text)
-                    else:
-                        # Might still decide to call tools; hold text until we know.
-                        pending_text.append(text)
+                    # Hold until this message ends without tools (same before and after tool rounds).
+                    pending_text.append(text)
                 elif mode == "values":
                     final_state = payload
 
             # End of stream: flush a no-tool answer that never got a msg_id change.
             if not msg_is_tool:
                 flush_pending()
+        except KeyboardInterrupt:
+            run_error = "Interrupted."
+        except Exception as exc:
+            run_error = _format_run_error(exc)
         finally:
             working_clear()
+
+        if run_error is not None:
+            if reply_open:
+                print()
+                agent_reply_end()
+            print(run_error)
+            continue
 
         if reply_open:
             print()
