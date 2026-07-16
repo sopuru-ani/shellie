@@ -435,15 +435,27 @@ def file_grep(
 def file_write(filepath: str, content: str) -> str:
     """Create a new file or fully overwrite a file.
 
-    Use only when the file does not exist yet, or the user explicitly wants a full rewrite.
-    For changes to an existing file, prefer file_edit (surgical old_str → new_str patches)."""
+    Requires BOTH filepath and content. Use only when the file does not exist yet, or the
+    user explicitly wants a full rewrite. For changes to an existing file, prefer file_edit.
+    After a successful write, stop and reply — do not page the file with shell commands."""
+    if not filepath or not str(filepath).strip():
+        return (
+            "Error: file_write requires filepath AND content. Call again with both "
+            "(e.g. filepath='recoil_duel.html' and the full file content). "
+            "Do not call file_write with content alone."
+        )
+    if content is None:
+        return "Error: file_write requires content (the full file text)."
     if _is_secret_path(filepath):
         return (
             f"Error: refusing to write {filepath!r} — looks like a secrets/env file."
         )
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
-    return f"File {filepath} successfully written."
+    return (
+        f"File {filepath} successfully written ({len(content)} characters). "
+        "Reply to the user now; do not keep re-reading or shell-paging this file."
+    )
 
 
 @tool
