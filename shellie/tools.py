@@ -421,7 +421,10 @@ def file_grep(
 
 @tool
 def file_write(filepath: str, content: str) -> str:
-    """Create or overwrite a whole file. Prefer file_edit for small changes in large files."""
+    """Create a new file or fully overwrite a file.
+
+    Use only when the file does not exist yet, or the user explicitly wants a full rewrite.
+    For changes to an existing file, prefer file_edit (surgical old_str → new_str patches)."""
     if _is_secret_path(filepath):
         return (
             f"Error: refusing to write {filepath!r} — looks like a secrets/env file."
@@ -440,9 +443,10 @@ def file_edit(
 ) -> str:
     """Replace an exact text snippet in an existing file (surgical edit).
 
-    Pass old_str/new_str as single strings (may include newlines for a whole function or whole block of code).
-    old_str must match the file exactly. If it appears more than once, either make old_str more unique or set replace_all=True. Prefer this over file_write for large files;
-    use file_write to create new files or rewrite everything."""
+    Prefer this over file_write whenever the file already exists. Pass old_str/new_str as
+    single strings (may include newlines for a whole function or block). old_str must match
+    the file exactly. If it appears more than once, narrow old_str or set replace_all=True.
+    Use file_write only to create new files or when the user asks for a full rewrite."""
     if _is_secret_path(filepath):
         return (
             f"Error: refusing to edit {filepath!r} — looks like a secrets/env file."
