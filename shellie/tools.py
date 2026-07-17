@@ -672,10 +672,6 @@ def _python_module_available(module: str) -> bool:
     return result.returncode == 0
 
 
-def _path_tool_available(name: str) -> bool:
-    return shutil.which(name) is not None
-
-
 def _run_lint_subprocess(cmd: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
     """Run a linter command; return (exit_code, combined stdout+stderr)."""
     try:
@@ -787,13 +783,16 @@ def _lint_with_path_tool(
     args: list[str],
     install_hint: str,
 ) -> str:
-    if not _path_tool_available(binary):
+    # Use the full resolved path. On Windows, bare names like "htmlhint" often fail
+    # with WinError 2 because CreateProcess won't launch npm's .cmd shims by short name.
+    resolved = shutil.which(binary)
+    if not resolved:
         return (
             f"Error: {binary} was not found on PATH.\n"
             f"Install: {install_hint}\n"
             "(Node linters are not part of Shellie's Python venv — install via npm/npx.)"
         )
-    code, out = _run_lint_subprocess([binary, *args], cwd=path.parent)
+    code, out = _run_lint_subprocess([resolved, *args], cwd=path.parent)
     return _format_lint_result(binary, path, code, out)
 
 
