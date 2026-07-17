@@ -1,6 +1,10 @@
 import fnmatch
+import json
 import platform
 import re
+import shutil
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +51,26 @@ INTERACTIVE_COMMAND_PATTERNS = [
 SSH_NONINTERACTIVE = re.compile(
     r"\bssh\b.*(-T\b|-N\b|-f\b|-o\s+BatchMode=yes)",
     re.I,
+)
+
+# Extensions read_lint accepts. Pip tools (ruff, yamllint) run via sys.executable -m
+# so they use Shellie's venv. Node tools (eslint, htmlhint, stylelint) use PATH.
+LINT_SUPPORTED_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".html",
+        ".htm",
+        ".css",
+        ".scss",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+    }
 )
 
 search_tool = DuckDuckGoSearchRun()
@@ -630,3 +654,202 @@ def recall_device(query: str) -> str:
     Call before remember_device when the user asks about machine setup or prefs,
     or to avoid storing duplicate facts."""
     return _recall_device(query)
+
+
+_LINT_OUTPUT_MAX = 12000
+
+
+def _python_module_available(module: str) -> bool:
+    """True if `module` imports under Shellie's current interpreter (venv-aware)."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", f"import {module}"],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _path_tool_available(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _run_lint_subprocess(cmd: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
+    """Run a linter command; return (exit_code, combined stdout+stderr)."""
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(cwd) if cwd else None,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return -1, "Error: linter timed out after 60s."
+    except OSError as exc:
+        return -1, f"Error: could not run linter: {exc}"
+    out = ((result.stdout or "") + (result.stderr or "")).strip()
+    return result.returncode, out
+
+
+def _format_lint_result(tool_name: str, path: Path, exit_code: int, output: str) -> str:
+    """Normalize linter output for the model (exit 0 with empty = clean)."""
+    if exit_code == 0 and not output:
+        return f"{tool_name}: no issues found in {path}."
+    if len(output) > _LINT_OUTPUT_MAX:
+        output = (
+            output[:_LINT_OUTPUT_MAX]
+            + f"\n\n... truncated to {_LINT_OUTPUT_MAX} characters."
+        )
+    # Many linters exit non-zero when they find problems — still return the report.
+    header = f"{tool_name} (exit {exit_code}) on {path}:\n"
+    return header + (output or "(no output)")
+
+
+def _lint_json(path: Path) -> str:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        return f"Error: {path} is not valid UTF-8 text."
+    except json.JSONDecodeError as exc:
+        return f"json: parse error in {path}: {exc}"
+    except OSError as exc:
+        return f"Error reading {path}: {exc}"
+    return f"json: no issues found in {path} (valid JSON)."
+
+
+def _lint_toml(path: Path) -> str:
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            return (
+                "Error: no TOML parser available (need Python 3.11+ tomllib, "
+                "or install tomli)."
+            )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: {path} is not valid UTF-8 text."
+    except OSError as exc:
+        return f"Error reading {path}: {exc}"
+    try:
+        tomllib.loads(text)
+    except Exception as exc:  # tomllib.TOMLDecodeError / tomli equivalent
+        return f"toml: parse error in {path}: {exc}"
+    return f"toml: no issues found in {path} (valid TOML)."
+
+
+def _lint_with_ruff(path: Path) -> str:
+    if not _python_module_available("ruff"):
+        return (
+            "Error: ruff is not installed in Shellie's environment.\n"
+            "It should ship with Shellie — try reinstalling/upgrading Shellie.\n"
+            "Or install manually: pip install ruff\n"
+            "Or into pipx Shellie: pipx inject shellie ruff\n"
+            "After pipx inject, quit Shellie and start it again in a new terminal "
+            "so the updated environment is picked up."
+        )
+    code, out = _run_lint_subprocess(
+        [sys.executable, "-m", "ruff", "check", "--output-format", "concise", str(path)],
+        cwd=path.parent,
+    )
+    return _format_lint_result("ruff", path, code, out)
+
+
+def _lint_with_yamllint(path: Path) -> str:
+    if not _python_module_available("yamllint"):
+        return (
+            "Error: yamllint is not installed in Shellie's environment.\n"
+            "Install with: pip install yamllint\n"
+            "Or: pip install 'shellie[lint]'\n"
+            "Or into pipx Shellie: pipx inject shellie yamllint\n"
+            "After pipx inject, quit Shellie and start it again in a new terminal "
+            "so the updated environment is picked up."
+        )
+    code, out = _run_lint_subprocess(
+        [sys.executable, "-m", "yamllint", "-f", "parsable", str(path)],
+        cwd=path.parent,
+    )
+    return _format_lint_result("yamllint", path, code, out)
+
+
+def _lint_with_path_tool(
+    path: Path,
+    *,
+    binary: str,
+    args: list[str],
+    install_hint: str,
+) -> str:
+    if not _path_tool_available(binary):
+        return (
+            f"Error: {binary} was not found on PATH.\n"
+            f"Install: {install_hint}\n"
+            "(Node linters are not part of Shellie's Python venv — install via npm/npx.)"
+        )
+    code, out = _run_lint_subprocess([binary, *args], cwd=path.parent)
+    return _format_lint_result(binary, path, code, out)
+
+
+@tool
+def read_lint(filepath: str) -> str:
+    """Run a linter on a file and return the report as text.
+
+    Use when the user asks what is wrong with a file, or after editing, to catch
+    definite syntax/style issues (not a substitute for reading the code for logic).
+
+    Supported: .py (ruff), .js/.jsx/.ts/.tsx (eslint), .html (htmlhint),
+    .css/.scss (stylelint), .json (stdlib), .yaml/.yml (yamllint), .toml (stdlib).
+    Pip tools run inside Shellie's interpreter; npm tools must be on PATH."""
+    path = Path(filepath).expanduser()
+    if not path.is_file():
+        return (
+            f"Error: {filepath!r} is not a file. "
+            "Pass a real path (e.g. shellie/cli.py or recoil_duel.html)."
+        )
+
+    suffix = path.suffix.casefold()
+    if suffix not in LINT_SUPPORTED_EXTENSIONS:
+        supported = ", ".join(sorted(LINT_SUPPORTED_EXTENSIONS))
+        return (
+            f"Error: {filepath!r} has unsupported type {path.suffix!r}. "
+            f"Supported: {supported}."
+        )
+
+    if suffix == ".py":
+        return _lint_with_ruff(path)
+    if suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return _lint_with_path_tool(
+            path,
+            binary="eslint",
+            args=["--no-error-on-unmatched-pattern", str(path)],
+            install_hint="npm install -g eslint   (or use a project-local eslint)",
+        )
+    if suffix in {".html", ".htm"}:
+        return _lint_with_path_tool(
+            path,
+            binary="htmlhint",
+            args=[str(path)],
+            install_hint="npm install -g htmlhint",
+        )
+    if suffix in {".css", ".scss"}:
+        return _lint_with_path_tool(
+            path,
+            binary="stylelint",
+            args=[str(path)],
+            install_hint="npm install -g stylelint stylelint-config-standard",
+        )
+    if suffix == ".json":
+        return _lint_json(path)
+    if suffix in {".yaml", ".yml"}:
+        return _lint_with_yamllint(path)
+    if suffix == ".toml":
+        return _lint_toml(path)
+
+    return f"Error: no linter wired for {suffix!r} yet."

@@ -18,10 +18,12 @@ dependencies = [
     "langgraph-checkpoint-sqlite",
     "python-dotenv",
     "pydantic",
+    "ruff",
 ]
 
 [project.optional-dependencies]
 cognee = ["cognee"]
+lint = ["yamllint"]
 
 [project.scripts]
 shellie = "shellie.cli:main"

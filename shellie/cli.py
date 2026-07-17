@@ -1,5 +1,6 @@
 """CLI entry point for shellie."""
 
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from shellie.agent import build_agent
 from shellie.cognee_memory import cognee_status_message, init_cognee_memory
 from shellie.config import bootstrap
+from shellie.images import encode_image_ref, looks_like_image_ref
 from shellie.paths import DEVICE_CONFIG_DIR, project_agent_dir, project_session_db
 from shellie.session_memory import clear_session, session_message_count
 from shellie.shell import close_shell, system_shell_env
@@ -114,11 +116,64 @@ def _format_run_error(exc: BaseException) -> str:
     return f"Error: {first}"
 
 
+def _split_command_args(rest: str) -> list[str]:
+    """Split a command's argument string, tolerating Windows backslash paths."""
+    try:
+        return shlex.split(rest, posix=False)
+    except ValueError:
+        return rest.split()
+
+
+def _print_images(pending_images: list[str]) -> None:
+    if not pending_images:
+        print("No images attached.")
+        return
+    print(f"Attached images ({len(pending_images)}):")
+    for i, ref in enumerate(pending_images, 1):
+        print(f"  {i}. {ref}")
+
+
+def _extract_auto_images(query: str) -> list[str]:
+    """Pull image-looking path/URL tokens out of a normal chat message."""
+    found: list[str] = []
+    for token in _split_command_args(query):
+        cleaned = token.strip().strip('"').strip("'")
+        if cleaned and looks_like_image_ref(cleaned):
+            found.append(cleaned)
+    return found
+
+
+def _build_message_content(query: str, pending_images: list[str]):
+    """Text-only string when no images; otherwise a multimodal content list.
+
+    References are encoded on the fly here (not persisted), so session.sqlite only
+    ever stores the resulting message — we pass encoded data URIs to the model but
+    keep the buffer as plain path/URL strings.
+    """
+    if not pending_images:
+        return query, []
+    content = [{"type": "text", "text": query}]
+    errors: list[str] = []
+    for ref in pending_images:
+        data_uri, error = encode_image_ref(ref)
+        if error:
+            errors.append(f"{ref}: {error}")
+            continue
+        content.append({"type": "image_url", "image_url": {"url": data_uri}})
+    # If every image failed, fall back to text so the turn still runs.
+    if len(content) == 1:
+        return query, errors
+    return content, errors
+
+
 def run_repl(project_root: Path) -> None:
     agent, session_config, checkpointer, thread_id = build_agent(project_root)
 
+    pending_images: list[str] = []
+
     print("Tool and shell activity print as they run. Set AGENT_DEBUG=1 for raw LangChain logs.\n")
-    print("Commands: /shell, /shell <cmd>, /chat (in shell mode), /clear, /bye\n")
+    print("Commands: /shell, /shell <cmd>, /chat (in shell mode), /clear, /bye")
+    print("Images:   /image <path|url> [question], /attach <path|url>, /images, /images clear, /detach <n>\n")
     print(f"Project root:  {project_root}")
     print(f"Config:        {project_root / '.env'}")
     print(f"Project data:  {project_agent_dir(project_root)}  (session + Cognee project tier)")
@@ -140,8 +195,67 @@ def run_repl(project_root: Path) -> None:
 
         if query.strip() == "/clear":
             clear_session(checkpointer, thread_id)
+            pending_images.clear()
             print("Session cleared.")
             continue
+
+        stripped = query.strip()
+
+        if stripped == "/images":
+            _print_images(pending_images)
+            continue
+
+        if stripped == "/images clear":
+            pending_images.clear()
+            print("Cleared all attached images.")
+            continue
+
+        if stripped.startswith("/detach"):
+            args = _split_command_args(stripped[len("/detach"):])
+            if len(args) != 1 or not args[0].isdigit():
+                print("Usage: /detach <number>  (see /images)")
+                continue
+            idx = int(args[0])
+            if 1 <= idx <= len(pending_images):
+                removed = pending_images.pop(idx - 1)
+                print(f"Detached {idx}: {removed}")
+            else:
+                print(f"No image #{idx}. There are {len(pending_images)} attached.")
+            continue
+
+        if stripped.startswith("/attach"):
+            args = _split_command_args(stripped[len("/attach"):])
+            if not args:
+                print("Usage: /attach <path|url>")
+                continue
+            for ref in args:
+                pending_images.append(ref)
+                print(f"Attached: {ref}")
+            continue
+
+        if stripped.startswith("/image"):
+            rest = stripped[len("/image"):].lstrip()
+            if not rest:
+                print("Usage: /image <path|url> [question]")
+                continue
+            # First token is the path/URL (quoted if it has spaces); the rest is the question.
+            if rest[0] in ("'", '"'):
+                quote = rest[0]
+                end = rest.find(quote, 1)
+                if end == -1:
+                    ref, question = rest[1:], ""
+                else:
+                    ref, question = rest[1:end], rest[end + 1:].strip()
+            else:
+                parts = rest.split(None, 1)
+                ref = parts[0]
+                question = parts[1].strip() if len(parts) > 1 else ""
+            pending_images.append(ref)
+            print(f"Attached: {ref}")
+            if not question:
+                # Attach only; wait for the next message to ask.
+                continue
+            query = question
 
         if query.strip() == "/shell":
             print("Shell mode - type /chat to return to chat mode. Each line runs in a fresh subshell")
@@ -160,6 +274,17 @@ def run_repl(project_root: Path) -> None:
                 continue
             subprocess.run(command, shell=True, env=system_shell_env())
             continue
+
+        # Auto-detect: pull image-looking paths/URLs out of a normal message.
+        if not query.startswith("/"):
+            for ref in _extract_auto_images(query):
+                if ref not in pending_images:
+                    pending_images.append(ref)
+                    print(f"Auto-attached image: {ref}")
+
+        message_content, image_errors = _build_message_content(query, pending_images)
+        for err in image_errors:
+            print(f"Image skipped — {err}")
 
         prev_count = session_message_count(agent, session_config)
 
@@ -198,7 +323,7 @@ def run_repl(project_root: Path) -> None:
         run_error: str | None = None
         try:
             for chunk in agent.stream(
-                {"messages": [HumanMessage(content=query)]},
+                {"messages": [HumanMessage(content=message_content)]},
                 config=session_config,
                 stream_mode=["updates", "messages", "values"],
             ):

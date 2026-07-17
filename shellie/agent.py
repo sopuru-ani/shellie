@@ -25,6 +25,7 @@ from shellie.tools import (
     search_tool,
     terminal_run,
     wikipedia_tool,
+    read_lint,
 )
 
 _BASE_SYSTEM_PROMPT = """
@@ -93,6 +94,12 @@ STRICT TOOL RULES — read first, always follow:
   Prefer file_grep before reading many whole files. Then file_read only the hit files you
   need. Default searches *.py under the project; widen glob/path if nothing matches.
   Do not spam near-identical greps; one clear pattern, then act on the result.
+- read_lint: run a linter on a file and return the report. Use when the user asks what is
+  wrong with a file, after you edit/write code and want definite syntax/style issues, or
+  before claiming a file is clean. Pass a real filepath. Complements file_read (logic /
+  behavior) — do not skip reading when you need to understand the code. If read_lint says
+  a linter is missing, tell the user the install hint from the tool result; do not invent
+  lint findings.
 - file_edit: surgically replace exact text in an existing file.
   Args: filepath, old_str, new_str (required). Aliases: find=old_str, replace=new_str.
   DEFAULT for any change to a file that already exists — bug fixes, refactors, feature
@@ -115,9 +122,10 @@ STRICT TOOL RULES — read first, always follow:
   like <TOOLCALL>... in chat — either call the real tool or explain in plain language.
 {cognee_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
   If unsure about code, APIs, project files, or local system/file questions: use tools
-  (file_read / file_grep / file_edit / search / file_write / terminal_run).
+  (file_read / file_grep / file_edit / file_write / read_lint / search / terminal_run).
 - Chain tools when the request needs it (e.g. file_grep → file_read → file_edit, or
-  file_write for a new script). Do not chain unrelated tools (e.g. wikipedia + ls).
+  file_write for a new script, or file_edit → read_lint). Do not chain unrelated tools
+  (e.g. wikipedia + ls).
   Prefer short chains: act, then answer. Do not burn the turn on endless verify loops.
 - After a tool fails: ONE recovery attempt with a corrected path/query (e.g. add .py,
   suggested close match). If that still fails, tell the user what failed — do not keep
@@ -294,6 +302,7 @@ def build_tools(*, cognee: bool) -> list:
         file_grep,
         file_edit,
         file_write,
+        read_lint,
     ]
     if cognee:
         tools.extend(

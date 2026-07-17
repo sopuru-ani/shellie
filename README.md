@@ -68,6 +68,15 @@ Base install is quick. The `[cognee]` extra adds Cognee and may take several min
 pipx inject shellie cognee
 ```
 
+**Optional YAML linting** (for `read_lint` on `.yml` / `.yaml`):
+
+```bash
+pipx inject shellie yamllint
+# or: pip install 'shellie[lint]'
+```
+
+After any `pipx inject`, quit Shellie (`/bye`) and start it again in a **new terminal** so the updated environment is picked up.
+
 Verify:
 
 ```bash
@@ -322,7 +331,7 @@ The `hosted_vllm/` prefix on `COGNEE_LLM_MODEL` tells LiteLLM to use your endpoi
 
 ## Dependencies
 
-LangChain, LangGraph (SQLite checkpointer), DuckDuckGo search, Wikipedia, python-dotenv, pydantic. Optional: **Cognee** via `shellie[cognee]`. LLM backend is any OpenAI-compatible API (NVIDIA NIM, Ollama, etc.) configured in the **project's** `.env`.
+LangChain, LangGraph (SQLite checkpointer), DuckDuckGo search, Wikipedia, python-dotenv, pydantic, **ruff** (Python linting for `read_lint`). Optional: **Cognee** via `shellie[cognee]`; **yamllint** via `shellie[lint]` or `pipx inject shellie yamllint` (restart Shellie in a new terminal after inject). LLM backend is any OpenAI-compatible API (NVIDIA NIM, Ollama, etc.) configured in the **project's** `.env`.
 
 ---
 
