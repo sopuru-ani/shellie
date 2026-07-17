@@ -753,7 +753,16 @@ def _lint_with_ruff(path: Path) -> str:
             "so the updated environment is picked up."
         )
     code, out = _run_lint_subprocess(
-        [sys.executable, "-m", "ruff", "check", "--output-format", "concise", str(path)],
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            "--no-cache",
+            "--output-format",
+            "concise",
+            str(path),
+        ],
         cwd=path.parent,
     )
     return _format_lint_result("ruff", path, code, out)
