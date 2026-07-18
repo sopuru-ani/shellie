@@ -1090,9 +1090,13 @@ def _script_type_from_attrs(attrs: str) -> str | None:
     return None
 
 
-def _extract_inline_scripts(html: str) -> list[tuple[str, str]]:
-    """Return list of (kind, body) where kind is 'script' or 'module'."""
-    found: list[tuple[str, str]] = []
+def _extract_inline_scripts(html: str) -> list[tuple[str, str, int]]:
+    """Return list of (kind, body, html_start_line) for inline JS blocks.
+
+    html_start_line is 1-based and points at the first line of the script body
+    in the HTML file (so temp-file line 1 maps to this line).
+    """
+    found: list[tuple[str, str, int]] = []
     for match in _SCRIPT_TAG_RE.finditer(html):
         attrs = match.group("attrs") or ""
         if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
@@ -1103,8 +1107,52 @@ def _extract_inline_scripts(html: str) -> list[tuple[str, str]]:
         body = match.group("body") or ""
         if not body.strip():
             continue
-        found.append((kind, body))
+        body_start = match.start("body")
+        html_start_line = html.count("\n", 0, body_start) + 1
+        found.append((kind, body, html_start_line))
     return found
+
+
+def _remap_inline_script_output(
+    output: str,
+    *,
+    html_path: Path,
+    html_start_line: int,
+) -> str:
+    """Rewrite temp-file line numbers to HTML file line numbers."""
+
+    def bump(script_line: int) -> int:
+        return html_start_line + script_line - 1
+
+    html_label = str(html_path)
+
+    def repl_path(match: re.Match[str]) -> str:
+        line = bump(int(match.group("line")))
+        col = match.group("col")
+        if col:
+            return f"{html_label}:{line}:{col}"
+        return f"{html_label}:{line}"
+
+    # node / eslint: C:\temp\foo.js:82 or foo.js:82:5
+    out = re.sub(
+        r"(?:[A-Za-z]:)?[^\s:]+\.js:(?P<line>\d+)(?::(?P<col>\d+))?",
+        repl_path,
+        output,
+    )
+
+    # eslint stylish: "  82:5  error ..."
+    def repl_stylish(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{bump(int(match.group(2)))}{match.group(3)}"
+
+    out = re.sub(r"(?m)^(\s*)(\d+)(:\d+\b)", repl_stylish, out)
+
+    # "line 82" / "Line 82,"
+    out = re.sub(
+        r"(?i)\bline (\d+)\b",
+        lambda m: f"line {bump(int(m.group(1)))}",
+        out,
+    )
+    return out
 
 
 def _check_js_with_node(source: str) -> tuple[int, str]:
@@ -1188,18 +1236,28 @@ def _lint_inline_scripts(path: Path) -> str:
 
     lines = [f"inline <script> checks: {len(scripts)} block(s)"]
     any_tool_skipped = False
-    for index, (kind, body) in enumerate(scripts, 1):
+    for index, (kind, body, html_start_line) in enumerate(scripts, 1):
         code, out, how = _check_js_with_eslint_temp(body, kind=kind)
         if how == "skipped":
             any_tool_skipped = True
+        loc = f"HTML line {html_start_line}+"
         if code == 0 and not out:
-            lines.append(f"  script #{index} ({kind}, via {how}): ok")
+            lines.append(
+                f"  script #{index} ({kind}, via {how}, {loc}): ok"
+            )
         else:
             detail = out or "(no output)"
+            detail = _remap_inline_script_output(
+                detail,
+                html_path=path,
+                html_start_line=html_start_line,
+            )
             if len(detail) > 2000:
                 detail = detail[:2000] + "\n... truncated ..."
             lines.append(
-                f"  script #{index} ({kind}, via {how}): FAILED (exit {code})\n{detail}"
+                f"  script #{index} ({kind}, via {how}, {loc}): "
+                f"FAILED (exit {code})\n"
+                f"  (line numbers remapped to {path})\n{detail}"
             )
     report = "\n".join(lines)
     if any_tool_skipped:
