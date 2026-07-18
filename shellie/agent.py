@@ -22,6 +22,7 @@ from shellie.tools import (
     recall_project,
     remember_device,
     remember_project,
+    request_shell_approval,
     search_tool,
     terminal_run,
     wikipedia_tool,
@@ -214,6 +215,12 @@ permission in chat. State the exact command you want to run and wait for approva
 terminal_run also enforces this: sensitive commands block until the user types 'yes'
 at the terminal prompt. If they cancel, report that the command was not run.
 
+For a multi-step install/scaffold plan: call request_shell_approval once with the exact
+command strings you will pass to terminal_run. If the user approves, those commands skip
+the per-command sensitive prompt for the rest of this turn only.
+If they reject: ask what they want instead, then wait — do not immediately re-call
+request_shell_approval in a loop.
+
 Sensitive commands include (not exhaustive):
 - git push, git pull, or any command that changes a remote
 - rm, mv, or other destructive file operations
@@ -299,6 +306,7 @@ def build_tools(*, cognee: bool) -> list:
         search_tool,
         wikipedia_tool,
         terminal_run,
+        request_shell_approval,
         file_read,
         file_grep,
         file_edit,

@@ -27,7 +27,22 @@ from shellie.ui import (
     shell_done,
     shell_running,
     working_show,
+    request_commands_approval,
+    commands_approved,
+    commands_rejected,
 )
+
+_approved_commands: set[str] = set()
+
+
+def clear_approved_commands() -> None:
+    """Drop plan approvals. Call at the start of each new user turn."""
+    _approved_commands.clear()
+
+
+def _command_preapproved(command: str) -> bool:
+    return command in _approved_commands
+
 
 INTERACTIVE_COMMAND_PATTERNS = [
     re.compile(r"\bgh\s+auth\s+(login|refresh)\b", re.I),
@@ -229,7 +244,11 @@ def terminal_run(command: str) -> str:
         shell_blocked("source-edit", command)
         return _source_edit_block_message(command)
 
-    if _is_sensitive_command(command) and not _confirm_sensitive_command(command):
+    if (
+        _is_sensitive_command(command)
+        and not _command_preapproved(command)
+        and not _confirm_sensitive_command(command)
+    ):
         shell_blocked("denied", command)
         return (
             "exit_code: blocked\n\n"
@@ -1342,3 +1361,27 @@ def read_lint(filepath: str) -> str:
         path,
         f"Error: no linter wired for {suffix!r} yet.",
     )
+
+@tool
+def request_shell_approval(request: list[str]) -> str:
+    """Request approval for exact shell command strings before running them.
+
+    Pass the exact commands you will later pass to terminal_run. On user yes,
+    those commands skip the per-command sensitive prompt for the rest of this
+    agent turn. Approvals clear when the user sends their next message.
+    """
+    commands = [c.strip() for c in request if isinstance(c, str) and c.strip()]
+    if not commands:
+        return "Error: No commands provided."
+    request_commands_approval(
+        "Requesting approval for:\n" + "\n".join(f"  {c}" for c in commands)
+    )
+    answer = input("yes to approve or no to reject: ").strip().lower()
+    while answer not in {"yes", "no"}:
+        answer = input("invalid input, please enter yes or no: ").strip().lower()
+    if answer == "yes":
+        _approved_commands.update(commands)
+        commands_approved()
+        return "Commands approved:\n" + "\n".join(commands)
+    commands_rejected()
+    return "Commands rejected:\n" + "\n".join(commands) + "\n\n Ask the user what commands they want instead and then try again."

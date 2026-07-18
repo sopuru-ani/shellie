@@ -116,3 +116,13 @@ def format_tool_args(args: dict) -> str:
         if isinstance(value, str) and "\n" not in value and len(value) < 80:
             return value
     return json.dumps(args, ensure_ascii=False)
+
+def request_commands_approval(command: str) -> None:
+    print(_c(_YELLOW, "\n⚠ sensitive command — approval required"))
+    print(_c(_YELLOW, command))
+
+def commands_approved() -> None:
+    print(_c(_GREEN, "  ✓ commands approved"))
+
+def commands_rejected() -> None:
+    print(_c(_RED, "  ✗ commands rejected"))

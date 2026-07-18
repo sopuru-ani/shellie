@@ -11,8 +11,9 @@ from shellie.cognee_memory import cognee_status_message, init_cognee_memory
 from shellie.config import bootstrap
 from shellie.images import encode_image_ref, looks_like_image_ref
 from shellie.paths import DEVICE_CONFIG_DIR, project_agent_dir, project_session_db
-from shellie.session_memory import clear_session, session_message_count
 from shellie.shell import close_shell, system_shell_env
+from shellie.tools import clear_approved_commands
+from shellie.session_memory import clear_session, session_message_count
 from shellie.ui import (
     agent_calling_tool,
     agent_reply_end,
@@ -196,6 +197,7 @@ def run_repl(project_root: Path) -> None:
         if query.strip() == "/clear":
             clear_session(checkpointer, thread_id)
             pending_images.clear()
+            clear_approved_commands()
             print("Session cleared.")
             continue
 
@@ -285,6 +287,9 @@ def run_repl(project_root: Path) -> None:
         message_content, image_errors = _build_message_content(query, pending_images)
         for err in image_errors:
             print(f"Image skipped — {err}")
+
+        # New user turn: prior plan approvals do not carry over.
+        clear_approved_commands()
 
         prev_count = session_message_count(agent, session_config)
 
