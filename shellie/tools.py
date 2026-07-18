@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -706,6 +707,33 @@ def _format_lint_result(tool_name: str, path: Path, exit_code: int, output: str)
     return header + (output or "(no output)")
 
 
+def _lint_next_steps(path: Path, *, mention_install: bool = True) -> str:
+    """Tell the model to review manually and (usually) mention install to the user."""
+    lines = [
+        "Next steps for the assistant:",
+        f"- Call file_read on {path} and review the file yourself for issues.",
+    ]
+    if mention_install:
+        lines.append(
+            "- Tell the user they can install the missing tool(s) noted above so "
+            "future read_lint calls can catch definite lint/type errors."
+        )
+    return "\n".join(lines)
+
+
+def _lint_unavailable(
+    path: Path,
+    message: str,
+    *,
+    mention_install: bool = True,
+) -> str:
+    """When a linter can't run: install hint + tell the model to file_read."""
+    return (
+        f"{message.rstrip()}\n\n"
+        f"{_lint_next_steps(path, mention_install=mention_install)}"
+    )
+
+
 def _lint_json(path: Path) -> str:
     try:
         json.loads(path.read_text(encoding="utf-8"))
@@ -725,9 +753,10 @@ def _lint_toml(path: Path) -> str:
         try:
             import tomli as tomllib  # type: ignore
         except ImportError:
-            return (
+            return _lint_unavailable(
+                path,
                 "Error: no TOML parser available (need Python 3.11+ tomllib, "
-                "or install tomli)."
+                "or install tomli).",
             )
     try:
         text = path.read_text(encoding="utf-8")
@@ -744,13 +773,14 @@ def _lint_toml(path: Path) -> str:
 
 def _lint_with_ruff(path: Path) -> str:
     if not _python_module_available("ruff"):
-        return (
+        return _lint_unavailable(
+            path,
             "Error: ruff is not installed in Shellie's environment.\n"
             "It should ship with Shellie — try reinstalling/upgrading Shellie.\n"
             "Or install manually: pip install ruff\n"
             "Or into pipx Shellie: pipx inject shellie ruff\n"
             "After pipx inject, quit Shellie and start it again in a new terminal "
-            "so the updated environment is picked up."
+            "so the updated environment is picked up.",
         )
     code, out = _run_lint_subprocess(
         [
@@ -770,13 +800,14 @@ def _lint_with_ruff(path: Path) -> str:
 
 def _lint_with_yamllint(path: Path) -> str:
     if not _python_module_available("yamllint"):
-        return (
+        return _lint_unavailable(
+            path,
             "Error: yamllint is not installed in Shellie's environment.\n"
             "Install with: pip install yamllint\n"
             "Or: pip install 'shellie[lint]'\n"
             "Or into pipx Shellie: pipx inject shellie yamllint\n"
             "After pipx inject, quit Shellie and start it again in a new terminal "
-            "so the updated environment is picked up."
+            "so the updated environment is picked up.",
         )
     code, out = _run_lint_subprocess(
         [sys.executable, "-m", "yamllint", "-f", "parsable", str(path)],
@@ -796,13 +827,399 @@ def _lint_with_path_tool(
     # with WinError 2 because CreateProcess won't launch npm's .cmd shims by short name.
     resolved = shutil.which(binary)
     if not resolved:
-        return (
+        return _lint_unavailable(
+            path,
             f"Error: {binary} was not found on PATH.\n"
             f"Install: {install_hint}\n"
-            "(Node linters are not part of Shellie's Python venv — install via npm/npx.)"
+            "(Node linters are not part of Shellie's Python venv — install via npm/npx.)",
         )
     code, out = _run_lint_subprocess([resolved, *args], cwd=path.parent)
     return _format_lint_result(binary, path, code, out)
+
+
+# --- eslint / tsc / HTML inline scripts ---------------------------------------
+
+_ESLINT_CONFIG_NAMES = (
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "eslint.config.cjs",
+    "eslint.config.ts",
+    ".eslintrc",
+    ".eslintrc.js",
+    ".eslintrc.cjs",
+    ".eslintrc.json",
+    ".eslintrc.yml",
+    ".eslintrc.yaml",
+)
+
+_SCRIPT_TAG_RE = re.compile(
+    r"<script(?P<attrs>[^>]*)>(?P<body>.*?)</script>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_NON_JS_SCRIPT_TYPES = frozenset(
+    {
+        "application/json",
+        "importmap",
+        "text/template",
+        "text/html",
+        "text/plain",
+        "text/x-handlebars-template",
+    }
+)
+
+
+def _lint_configs_dir() -> Path:
+    return Path(__file__).resolve().parent / "lint_configs"
+
+
+def _shellie_eslint_fallback(kind: str) -> Path | None:
+    """kind: 'script' | 'module' | 'jsx'."""
+    name = {
+        "script": "eslint.script.mjs",
+        "module": "eslint.module.mjs",
+        "jsx": "eslint.jsx.mjs",
+    }.get(kind)
+    if not name:
+        return None
+    path = _lint_configs_dir() / name
+    return path if path.is_file() else None
+
+
+def _find_project_eslint_config(start: Path) -> Path | None:
+    """Walk up from start (file or dir) looking for an eslint config. Stop at .git."""
+    directory = start if start.is_dir() else start.parent
+    for _ in range(48):
+        for name in _ESLINT_CONFIG_NAMES:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+        pkg = directory / "package.json"
+        if pkg.is_file():
+            try:
+                data = json.loads(pkg.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                data = None
+            if isinstance(data, dict) and data.get("eslintConfig"):
+                return pkg
+        if (directory / ".git").exists():
+            break
+        parent = directory.parent
+        if parent == directory:
+            break
+        directory = parent
+    return None
+
+
+def _find_tsconfig(start: Path) -> Path | None:
+    directory = start if start.is_dir() else start.parent
+    for _ in range(48):
+        for name in ("tsconfig.json", "jsconfig.json"):
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+        if (directory / ".git").exists():
+            break
+        parent = directory.parent
+        if parent == directory:
+            break
+        directory = parent
+    return None
+
+
+def _resolve_node_binary(name: str = "node") -> str | None:
+    return shutil.which(name)
+
+
+def _eslint_binary() -> str | None:
+    return shutil.which("eslint")
+
+
+def _run_eslint(
+    target: Path,
+    *,
+    cwd: Path,
+    config: Path | None = None,
+) -> tuple[int, str]:
+    eslint = _eslint_binary()
+    if not eslint:
+        return -1, (
+            "Error: eslint was not found on PATH.\n"
+            "Install: npm install -g eslint\n"
+            "(Or use a project-local eslint on PATH.)"
+        )
+    cmd = [eslint, "--no-error-on-unmatched-pattern"]
+    if config is not None:
+        cmd.extend(["--config", str(config)])
+    cmd.append(str(target))
+    return _run_lint_subprocess(cmd, cwd=cwd)
+
+
+def _guess_js_kind(path: Path) -> str:
+    """Prefer module fallback when the file looks like ESM."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")[:12000]
+    except OSError:
+        return "script"
+    if re.search(r"(?m)^\s*(import\s|export\s)", text):
+        return "module"
+    return "script"
+
+
+def _lint_js_family(path: Path, *, fallback_kind: str) -> str:
+    """eslint for .js / .jsx — project config if present, else Shellie fallback."""
+    if not _eslint_binary():
+        return _lint_unavailable(
+            path,
+            "Error: eslint was not found on PATH.\n"
+            "Install: npm install -g eslint\n"
+            "(Node linters are not part of Shellie's Python venv.)",
+        )
+    project_cfg = _find_project_eslint_config(path)
+    if project_cfg is not None:
+        code, out = _run_eslint(path, cwd=path.parent, config=None)
+        note = f"(using project config near {project_cfg.name})"
+        body = _format_lint_result("eslint", path, code, out)
+        return f"{note}\n{body}"
+
+    fallback = _shellie_eslint_fallback(fallback_kind)
+    if fallback is None:
+        return _lint_unavailable(
+            path,
+            f"Error: no project eslint config and Shellie fallback "
+            f"({fallback_kind}) is missing from the install.",
+        )
+    code, out = _run_eslint(path, cwd=path.parent, config=fallback)
+    note = f"(no project eslint config; using Shellie fallback: {fallback.name})"
+    body = _format_lint_result("eslint", path, code, out)
+    return f"{note}\n{body}"
+
+
+def _lint_with_tsc(path: Path) -> str:
+    tsc = _resolve_node_binary("tsc")
+    # Prefer local node_modules/.bin/tsc via npx? Keep simple: tsc on PATH.
+    if not tsc:
+        # npx tsc is heavy; try typescript via npx only if tsc missing? Skip — clear message.
+        return _lint_unavailable(
+            path,
+            "tsc: skipped (TypeScript compiler not on PATH).\n"
+            "Install: npm install -g typescript   # provides `tsc`\n"
+            "Or use a project-local tsc on PATH.",
+        )
+    tsconfig = _find_tsconfig(path)
+    if tsconfig is not None:
+        code, out = _run_lint_subprocess(
+            [tsc, "--noEmit", "-p", str(tsconfig)],
+            cwd=tsconfig.parent,
+        )
+        return _format_lint_result(
+            f"tsc --noEmit -p {tsconfig.name}", path, code, out
+        )
+    # Orphan file: check just this file with loose flags.
+    code, out = _run_lint_subprocess(
+        [
+            tsc,
+            "--noEmit",
+            "--esModuleInterop",
+            "--skipLibCheck",
+            "--target",
+            "ES2020",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "bundler",
+            str(path),
+        ],
+        cwd=path.parent,
+    )
+    return _format_lint_result("tsc --noEmit (no tsconfig; loose check)", path, code, out)
+
+
+def _lint_ts_family(path: Path) -> str:
+    """eslint (project config only) + tsc typecheck. No Shellie TS eslint fallback."""
+    parts: list[str] = []
+    needs_manual = False
+
+    if not _eslint_binary():
+        needs_manual = True
+        parts.append(
+            "eslint: skipped (eslint not on PATH).\n"
+            "Install: npm install -g eslint\n"
+            "For TypeScript, also set up @typescript-eslint in the project."
+        )
+    else:
+        project_cfg = _find_project_eslint_config(path)
+        if project_cfg is None:
+            needs_manual = True
+            parts.append(
+                "eslint: skipped (no project eslint config).\n"
+                "Shellie has no TypeScript eslint fallback — add eslint + "
+                "@typescript-eslint in the project, or rely on tsc below."
+            )
+        else:
+            code, out = _run_eslint(path, cwd=path.parent, config=None)
+            parts.append(
+                f"(using project config near {project_cfg.name})\n"
+                + _format_lint_result("eslint", path, code, out)
+            )
+
+    tsc_result = _lint_with_tsc(path)
+    parts.append(tsc_result)
+    # _lint_with_tsc already includes next-steps when tsc is missing.
+    if needs_manual and "Next steps for the assistant:" not in tsc_result:
+        parts.append(_lint_next_steps(path))
+    return "\n\n".join(parts)
+
+
+def _script_type_from_attrs(attrs: str) -> str | None:
+    """
+    Return 'script', 'module', or None to skip (non-JS).
+    None type / text/javascript / application/javascript → script.
+    """
+    match = re.search(r"""\btype\s*=\s*["']([^"']+)["']""", attrs, re.IGNORECASE)
+    if not match:
+        return "script"
+    raw = match.group(1).strip().casefold()
+    if raw in _NON_JS_SCRIPT_TYPES or raw.startswith("text/template"):
+        return None
+    if raw in {"module", "text/javascript", "application/javascript", "text/ecmascript"}:
+        return "module" if raw == "module" else "script"
+    if "javascript" in raw or "ecmascript" in raw:
+        return "script"
+    # Unknown type — skip rather than false positives.
+    return None
+
+
+def _extract_inline_scripts(html: str) -> list[tuple[str, str]]:
+    """Return list of (kind, body) where kind is 'script' or 'module'."""
+    found: list[tuple[str, str]] = []
+    for match in _SCRIPT_TAG_RE.finditer(html):
+        attrs = match.group("attrs") or ""
+        if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
+            continue
+        kind = _script_type_from_attrs(attrs)
+        if kind is None:
+            continue
+        body = match.group("body") or ""
+        if not body.strip():
+            continue
+        found.append((kind, body))
+    return found
+
+
+def _check_js_with_node(source: str) -> tuple[int, str]:
+    node = _resolve_node_binary("node")
+    if not node:
+        return -1, "node not on PATH"
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".js",
+            delete=False,
+        ) as tmp:
+            tmp.write(source)
+            tmp_path = tmp.name
+        return _run_lint_subprocess([node, "--check", tmp_path])
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _check_js_with_eslint_temp(source: str, *, kind: str) -> tuple[int, str, str]:
+    """
+    Returns (exit_code, output, how) where how describes which path was used.
+    Prefer eslint + Shellie fallback; else node --check.
+    """
+    eslint = _eslint_binary()
+    fallback = _shellie_eslint_fallback(kind if kind in {"script", "module"} else "script")
+    if eslint and fallback is not None:
+        tmp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".js",
+                delete=False,
+            ) as tmp:
+                tmp.write(source)
+                tmp_path = tmp.name
+            code, out = _run_eslint(
+                Path(tmp_path),
+                cwd=Path(tmp_path).parent,
+                config=fallback,
+            )
+            return code, out, f"eslint + Shellie {fallback.name}"
+        finally:
+            if tmp_path:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    code, out = _check_js_with_node(source)
+    if code == -1 and out == "node not on PATH":
+        return (
+            -1,
+            (
+                "eslint not on PATH and node not on PATH — skipped JS syntax check.\n"
+                "Install: npm install -g eslint   and/or install Node.js"
+            ),
+            "skipped",
+        )
+    return code, out, "node --check (eslint unavailable)"
+
+
+def _lint_inline_scripts(path: Path) -> str:
+    try:
+        html = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return "inline <script>: skipped (file is not valid UTF-8)."
+    except OSError as exc:
+        return f"inline <script>: could not read file: {exc}"
+
+    scripts = _extract_inline_scripts(html)
+    if not scripts:
+        return "inline <script>: no inline JavaScript blocks found."
+
+    lines = [f"inline <script> checks: {len(scripts)} block(s)"]
+    any_tool_skipped = False
+    for index, (kind, body) in enumerate(scripts, 1):
+        code, out, how = _check_js_with_eslint_temp(body, kind=kind)
+        if how == "skipped":
+            any_tool_skipped = True
+        if code == 0 and not out:
+            lines.append(f"  script #{index} ({kind}, via {how}): ok")
+        else:
+            detail = out or "(no output)"
+            if len(detail) > 2000:
+                detail = detail[:2000] + "\n... truncated ..."
+            lines.append(
+                f"  script #{index} ({kind}, via {how}): FAILED (exit {code})\n{detail}"
+            )
+    report = "\n".join(lines)
+    if any_tool_skipped:
+        return f"{report}\n\n{_lint_next_steps(path)}"
+    return report
+
+
+def _lint_html(path: Path) -> str:
+    htmlhint = _lint_with_path_tool(
+        path,
+        binary="htmlhint",
+        args=[str(path)],
+        install_hint="npm install -g htmlhint",
+    )
+    scripts = _lint_inline_scripts(path)
+    # Avoid repeating the same next-steps block twice.
+    footer = _lint_next_steps(path)
+    if footer in htmlhint and footer in scripts:
+        scripts = scripts.replace(f"\n\n{footer}", "", 1)
+    return f"{htmlhint}\n\n{scripts}"
 
 
 @tool
@@ -812,9 +1229,16 @@ def read_lint(filepath: str) -> str:
     Use when the user asks what is wrong with a file, or after editing, to catch
     definite syntax/style issues (not a substitute for reading the code for logic).
 
-    Supported: .py (ruff), .js/.jsx/.ts/.tsx (eslint), .html (htmlhint),
-    .css/.scss (stylelint), .json (stdlib), .yaml/.yml (yamllint), .toml (stdlib).
-    Pip tools run inside Shellie's interpreter; npm tools must be on PATH."""
+    Supported:
+    - .py — ruff
+    - .js — eslint (project config, else Shellie fallback)
+    - .jsx — eslint (project config, else Shellie JSX fallback)
+    - .ts/.tsx — eslint if project config exists; plus tsc --noEmit when available
+    - .html/.htm — htmlhint + inline <script> (eslint fallback or node --check)
+    - .css/.scss — stylelint
+    - .json — stdlib; .yaml/.yml — yamllint; .toml — stdlib
+
+    Pip tools use Shellie's interpreter; npm tools must be on PATH."""
     path = Path(filepath).expanduser()
     if not path.is_file():
         return (
@@ -825,27 +1249,23 @@ def read_lint(filepath: str) -> str:
     suffix = path.suffix.casefold()
     if suffix not in LINT_SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(LINT_SUPPORTED_EXTENSIONS))
-        return (
+        return _lint_unavailable(
+            path,
             f"Error: {filepath!r} has unsupported type {path.suffix!r}. "
-            f"Supported: {supported}."
+            f"Supported: {supported}.",
+            mention_install=False,
         )
 
     if suffix == ".py":
         return _lint_with_ruff(path)
-    if suffix in {".js", ".jsx", ".ts", ".tsx"}:
-        return _lint_with_path_tool(
-            path,
-            binary="eslint",
-            args=["--no-error-on-unmatched-pattern", str(path)],
-            install_hint="npm install -g eslint   (or use a project-local eslint)",
-        )
+    if suffix == ".js":
+        return _lint_js_family(path, fallback_kind=_guess_js_kind(path))
+    if suffix == ".jsx":
+        return _lint_js_family(path, fallback_kind="jsx")
+    if suffix in {".ts", ".tsx"}:
+        return _lint_ts_family(path)
     if suffix in {".html", ".htm"}:
-        return _lint_with_path_tool(
-            path,
-            binary="htmlhint",
-            args=[str(path)],
-            install_hint="npm install -g htmlhint",
-        )
+        return _lint_html(path)
     if suffix in {".css", ".scss"}:
         return _lint_with_path_tool(
             path,
@@ -860,4 +1280,7 @@ def read_lint(filepath: str) -> str:
     if suffix == ".toml":
         return _lint_toml(path)
 
-    return f"Error: no linter wired for {suffix!r} yet."
+    return _lint_unavailable(
+        path,
+        f"Error: no linter wired for {suffix!r} yet.",
+    )

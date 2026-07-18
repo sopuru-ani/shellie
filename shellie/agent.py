@@ -98,8 +98,9 @@ STRICT TOOL RULES — read first, always follow:
   wrong with a file, after you edit/write code and want definite syntax/style issues, or
   before claiming a file is clean. Pass a real filepath. Complements file_read (logic /
   behavior) — do not skip reading when you need to understand the code. If read_lint says
-  a linter is missing, tell the user the install hint from the tool result; do not invent
-  lint findings.
+  a linter is missing or was skipped: follow its next steps — call file_read and review
+  yourself, and tell the user the install hint from the tool result. Do not invent lint
+  findings.
 - file_edit: surgically replace exact text in an existing file.
   Args: filepath, old_str, new_str (required). Aliases: find=old_str, replace=new_str.
   DEFAULT for any change to a file that already exists — bug fixes, refactors, feature

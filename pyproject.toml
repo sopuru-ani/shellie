@@ -31,3 +31,6 @@ shellie = "shellie.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["shellie*"]
+
+[tool.setuptools.package-data]
+shellie = ["lint_configs/*"]
