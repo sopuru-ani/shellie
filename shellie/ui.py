@@ -121,6 +121,9 @@ def request_commands_approval(command: str) -> None:
     print(_c(_YELLOW, "\n⚠ sensitive command — approval required"))
     print(_c(_YELLOW, command))
 
+def bold_text(text: str) -> str:
+    return _c(_BOLD, text)
+
 def commands_approved() -> None:
     print(_c(_GREEN, "  ✓ commands approved"))
 

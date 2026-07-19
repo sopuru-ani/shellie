@@ -20,6 +20,7 @@ from shellie.cognee_memory import (
     remember_project as _remember_project,
 )
 from shellie.shell import get_shell
+from shellie.web_fetch import fetch_url as _fetch_url
 from shellie.ui import (
     confirm_prompt,
     confirm_sensitive,
@@ -30,6 +31,7 @@ from shellie.ui import (
     request_commands_approval,
     commands_approved,
     commands_rejected,
+    bold_text,
 )
 
 _approved_commands: set[str] = set()
@@ -93,6 +95,24 @@ search_tool = DuckDuckGoSearchRun()
 
 api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=100)
 wikipedia_tool = WikipediaQueryRun(api_wrapper=api_wrapper)
+
+
+@tool
+def web_fetch(url: str, start: int = 0) -> str:
+    """Fetch a public http(s) URL and return readable page text.
+
+    Use after search/wikipedia when you need the contents of a specific docs or
+    article URL. Blocks private/loopback addresses. Supports HTML, plain text,
+    and JSON — not PDF or binary.
+
+    Args:
+        url: Full http(s) URL to fetch.
+        start: Character offset into the parsed page (default 0). If the result
+            says more content is available, call again with the same url and the
+            suggested start= value to continue (uses cache; no re-download).
+    """
+    return _fetch_url(url, start=start)
+
 
 SENSITIVE_COMMAND_PATTERNS = [
     re.compile(r"\bgit\s+push\b", re.I),
@@ -1376,9 +1396,9 @@ def request_shell_approval(request: list[str]) -> str:
     request_commands_approval(
         "Requesting approval for:\n" + "\n".join(f"  {c}" for c in commands)
     )
-    answer = input("yes to approve or no to reject: ").strip().lower()
+    answer = input(bold_text("yes to approve or no to reject: ")).strip().lower()
     while answer not in {"yes", "no"}:
-        answer = input("invalid input, please enter yes or no: ").strip().lower()
+        answer = input(bold_text("invalid input, please enter yes or no: ")).strip().lower()
     if answer == "yes":
         _approved_commands.update(commands)
         commands_approved()

@@ -25,6 +25,7 @@ from shellie.tools import (
     request_shell_approval,
     search_tool,
     terminal_run,
+    web_fetch,
     wikipedia_tool,
     read_lint,
 )
@@ -60,7 +61,7 @@ STRICT TOOL RULES — read first, always follow:
   smaller summarizing command. Do NOT use terminal_run to page through source files
   (no Select-Object -Skip, head/tail loops, more) — use file_read once or file_grep once.
 - Call a tool when the user's request cannot be answered correctly without it.
-- search and wikipedia are for looking things up when you need external facts:
+- search, wikipedia, and web_fetch are for looking things up when you need external facts:
   - User explicitly asks to search or look something up
   - A command, flag, error message, or tool you need is unclear — search with a specific
     query (e.g. "dnf install package fedora", "git error: not a git repository")
@@ -69,7 +70,11 @@ STRICT TOOL RULES — read first, always follow:
     timeout") — search current docs BEFORE writing or fixing that code. Do not invent APIs
     from memory when a quick search would confirm them.
   - Wikipedia for general concepts; search for how-tos, errors, CLI syntax, library APIs,
-    and troubleshooting
+    and troubleshooting (returns snippets + URLs).
+  - web_fetch: when you have a concrete http(s) URL (from search, the user, or docs) and
+    need the page body. Prefer search → pick 1–2 URLs → web_fetch over guessing.
+    If the result says more content is available, call web_fetch again with the same url
+    and the suggested start= offset. Do not fetch many pages per question.
   Do NOT use them to greet, explain yourself, or pad a reply. Do NOT search for things you
   can resolve with file_read or terminal_run on this machine first.
 - terminal_run: when the user wants a command run OR you need live system output. Never paste
@@ -124,10 +129,11 @@ STRICT TOOL RULES — read first, always follow:
   like <TOOLCALL>... in chat — either call the real tool or explain in plain language.
 {cognee_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
   If unsure about code, APIs, project files, or local system/file questions: use tools
-  (file_read / file_grep / file_edit / file_write / read_lint / search / terminal_run).
+  (file_read / file_grep / file_edit / file_write / read_lint / search / web_fetch /
+  terminal_run).
 - Chain tools when the request needs it (e.g. file_grep → file_read → file_edit, or
-  file_write for a new script, or file_edit → read_lint). Do not chain unrelated tools
-  (e.g. wikipedia + ls).
+  file_write for a new script, or file_edit → read_lint, or search → web_fetch). Do not
+  chain unrelated tools (e.g. wikipedia + ls).
   Prefer short chains: act, then answer. Do not burn the turn on endless verify loops.
 - After a tool fails: ONE recovery attempt with a corrected path/query (e.g. add .py,
   suggested close match). If that still fails, tell the user what failed — do not keep
@@ -304,6 +310,7 @@ def build_tools(*, cognee: bool) -> list:
     """Build the tools for the agent."""
     tools = [
         search_tool,
+        web_fetch,
         wikipedia_tool,
         terminal_run,
         request_shell_approval,
@@ -334,7 +341,7 @@ def build_agent(project_root: Path):
         api_key=os.getenv("LLM_API_KEY"),
         base_url=os.getenv("LLM_ENDPOINT"),
         max_tokens=8192,
-        temperature=0.3,
+        temperature=0.5,
     )
 
     thread_id = project_thread_id(project_root)

@@ -13,6 +13,7 @@ from shellie.images import encode_image_ref, looks_like_image_ref
 from shellie.paths import DEVICE_CONFIG_DIR, project_agent_dir, project_session_db
 from shellie.shell import close_shell, system_shell_env
 from shellie.tools import clear_approved_commands
+from shellie.web_fetch import clear_web_fetch_cache
 from shellie.session_memory import clear_session, session_message_count
 from shellie.ui import (
     agent_calling_tool,
@@ -198,6 +199,7 @@ def run_repl(project_root: Path) -> None:
             clear_session(checkpointer, thread_id)
             pending_images.clear()
             clear_approved_commands()
+            clear_web_fetch_cache()
             print("Session cleared.")
             continue
 
@@ -288,8 +290,9 @@ def run_repl(project_root: Path) -> None:
         for err in image_errors:
             print(f"Image skipped — {err}")
 
-        # New user turn: prior plan approvals do not carry over.
+        # New user turn: prior plan approvals and web_fetch page cache do not carry over.
         clear_approved_commands()
+        clear_web_fetch_cache()
 
         prev_count = session_message_count(agent, session_config)
 

@@ -19,6 +19,8 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "ruff",
+    "httpx",
+    "beautifulsoup4",
 ]
 
 [project.optional-dependencies]
