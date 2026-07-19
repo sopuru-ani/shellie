@@ -223,8 +223,10 @@ terminal_run also enforces this: sensitive commands block until the user types '
 at the terminal prompt. If they cancel, report that the command was not run.
 
 For a multi-step install/scaffold plan: call request_shell_approval once with the exact
-command strings you will pass to terminal_run. If the user approves, those commands skip
-the per-command sensitive prompt for the rest of this turn only.
+sensitive command strings (e.g. npm create / npm install). If the user approves, those
+commands skip the per-command sensitive prompt for the rest of this turn only.
+You may chain with && (e.g. cd dir && npm install) as long as each sensitive segment
+matches an approved string — non-sensitive parts like cd do not need approval.
 If they reject: ask what they want instead, then wait — do not immediately re-call
 request_shell_approval in a loop.
 

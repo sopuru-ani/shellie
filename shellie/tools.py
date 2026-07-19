@@ -42,8 +42,25 @@ def clear_approved_commands() -> None:
     _approved_commands.clear()
 
 
+def _split_chain_segments(command: str) -> list[str]:
+    """Split a chained shell command on && (cd && npm install → two segments)."""
+    return [part.strip() for part in re.split(r"\s*&&\s*", command.strip()) if part.strip()]
+
+
 def _command_preapproved(command: str) -> bool:
-    return command in _approved_commands
+    """True if this command (or every sensitive &&-segment) was plan-approved.
+
+    Non-sensitive pieces (e.g. cd) do not need to be in the approved set.
+    """
+    stripped = command.strip()
+    if stripped in _approved_commands:
+        return True
+    sensitive_parts = [
+        part for part in _split_chain_segments(stripped) if _is_sensitive_command(part)
+    ]
+    if not sensitive_parts:
+        return False
+    return all(part in _approved_commands for part in sensitive_parts)
 
 
 INTERACTIVE_COMMAND_PATTERNS = [
@@ -1386,9 +1403,11 @@ def read_lint(filepath: str) -> str:
 def request_shell_approval(request: list[str]) -> str:
     """Request approval for exact shell command strings before running them.
 
-    Pass the exact commands you will later pass to terminal_run. On user yes,
-    those commands skip the per-command sensitive prompt for the rest of this
-    agent turn. Approvals clear when the user sends their next message.
+    Pass the exact commands you will later pass to terminal_run (sensitive steps
+    like npm install). On user yes, those strings skip the per-command sensitive
+    prompt for the rest of this turn. Chained calls like `cd dir && npm install`
+    are allowed if every sensitive segment was approved — plain `cd` does not
+    need approval. Approvals clear when the user sends their next message.
     """
     commands = [c.strip() for c in request if isinstance(c, str) and c.strip()]
     if not commands:
