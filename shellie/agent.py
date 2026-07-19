@@ -6,7 +6,8 @@ from pathlib import Path
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_openai import ChatOpenAI
-
+from langchain_google_genai import ChatGoogleGenerativeAI as ChatGoogle
+from langchain_anthropic import ChatAnthropic
 from shellie.cognee_memory import cognee_memory_enabled
 from shellie.session_memory import (
     open_session_checkpointer,
@@ -332,18 +333,69 @@ def build_tools(*, cognee: bool) -> list:
     return tools
 
 
+def _build_llm():
+    """Build the chat model from LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_ENDPOINT.
+
+    Providers: openai (default), anthropic, google.
+    LLM_ENDPOINT is always used for openai. For anthropic/google it is optional —
+    only passed when set (proxies / custom gateways); omit for the stock APIs.
+    """
+    provider = (os.getenv("LLM_PROVIDER") or "openai").strip().casefold()
+    model = os.getenv("LLM_MODEL")
+    api_key = os.getenv("LLM_API_KEY")
+    endpoint = (os.getenv("LLM_ENDPOINT") or "").strip() or None
+    temperature = 0.5
+    max_tokens = 8192
+
+    if not model:
+        raise ValueError("LLM_MODEL is required in the environment / .env")
+    if not api_key:
+        raise ValueError("LLM_API_KEY is required in the environment / .env")
+
+    if provider == "openai":
+        kwargs: dict = {
+            "model": model,
+            "api_key": api_key,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if endpoint:
+            kwargs["base_url"] = endpoint
+        return ChatOpenAI(**kwargs)
+
+    if provider == "anthropic":
+        kwargs = {
+            "model": model,
+            "api_key": api_key,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if endpoint:
+            kwargs["base_url"] = endpoint
+        return ChatAnthropic(**kwargs)
+
+    if provider == "google":
+        kwargs = {
+            "model": model,
+            "api_key": api_key,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if endpoint:
+            kwargs["base_url"] = endpoint
+        return ChatGoogle(**kwargs)
+
+    raise ValueError(
+        f"Invalid LLM_PROVIDER {provider!r}. "
+        "Use one of: openai, anthropic, google."
+    )
+
+
 def build_agent(project_root: Path):
     """Create the LangChain agent and session handles for one project."""
     agent_debug = os.getenv("AGENT_DEBUG", "").lower() in ("1", "true", "yes")
 
-    llm = ChatOpenAI(
-        model=os.getenv("LLM_MODEL"),
-        api_key=os.getenv("LLM_API_KEY"),
-        base_url=os.getenv("LLM_ENDPOINT"),
-        max_tokens=8192,
-        temperature=0.5,
-    )
-
+    llm = _build_llm()
     thread_id = project_thread_id(project_root)
     checkpointer = open_session_checkpointer(project_root)
     config = session_config(thread_id)

@@ -281,13 +281,18 @@ Copy [`.env.example`](.env.example) into **your project root** and fill in API k
 
 **Cognee** — set `COGNEE_ENABLED=1` and the `COGNEE_*` block below when you want long-term memory. Chat and Cognee use separate LLM settings.
 
-**Chat agent** (`LLM_*`) — LangChain, talks directly to `LLM_ENDPOINT`:
+**Chat agent** (`LLM_*`) — LangChain; `LLM_PROVIDER` selects the client
+(`openai` default, or `anthropic` / `google`):
 
 ```dotenv
+LLM_PROVIDER=openai
 LLM_MODEL="nvidia/your-model-id"
 LLM_ENDPOINT="https://integrate.api.nvidia.com/v1"
 LLM_API_KEY="nvapi-..."
 ```
+
+For Anthropic or Google, set `LLM_PROVIDER` and the matching model/key; leave
+`LLM_ENDPOINT` unset unless you use a custom proxy. See `.env.example`.
 
 **Cognee** (`COGNEE_LLM_*`, `COGNEE_EMBEDDING_*`) — remember/recall only:
 

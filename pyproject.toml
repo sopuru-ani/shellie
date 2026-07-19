@@ -13,6 +13,7 @@ dependencies = [
     "langchain-community",
     "langchain-openai",
     "langchain-anthropic",
+    "langchain-google-genai",
     "wikipedia",
     "ddgs",
     "langgraph-checkpoint-sqlite",
