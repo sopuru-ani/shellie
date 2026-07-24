@@ -26,10 +26,12 @@ dependencies = [
 
 [project.optional-dependencies]
 cognee = ["cognee"]
+mcp = ["langchain-mcp-adapters"]
 lint = ["yamllint"]
 
 [project.scripts]
 shellie = "shellie.cli:main"
+shellie-mcp = "shellie.mcp.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI as ChatGoogle
 from langchain_anthropic import ChatAnthropic
 from shellie.cognee_memory import cognee_memory_enabled
+from shellie.mcp.client import load_mcp_tools
 from shellie.session_memory import (
     open_session_checkpointer,
     project_thread_id,
@@ -128,7 +129,7 @@ STRICT TOOL RULES — read first, always follow:
   After the user reports a bug in code you wrote, update with file_edit (file already
   exists) — do not leave the fix only in the chat reply. Never print fake tool markup
   like <TOOLCALL>... in chat — either call the real tool or explain in plain language.
-{cognee_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
+{cognee_section}{mcp_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
   If unsure about code, APIs, project files, or local system/file questions: use tools
   (file_read / file_grep / file_edit / file_write / read_lint / search / web_fetch /
   terminal_run).
@@ -304,9 +305,27 @@ _COGNEE_SYSTEM_PROMPT = """- Cognee long-term memory (recall_* / remember_*):
 """
 
 
-def build_system_prompt(*, cognee: bool) -> str:
+def _mcp_system_prompt(connected: list[str]) -> str:
+    if not connected:
+        return ""
+    servers = ", ".join(connected)
+    return f"""- MCP external tools ({servers}):
+  Prefixed tools (e.g. github_*) come from MCP servers — not Shellie builtins.
+  Use them when the user asks for work those integrations handle (GitHub: repos, issues,
+  PRs, search). Prefer MCP over terminal_run / gh when a matching tool exists.
+  If an MCP tool fails, report the error; do not invent API results.
+  Do not create, update, or delete remote/GitHub state unless the user clearly asked.
+
+"""
+
+
+def build_system_prompt(*, cognee: bool, mcp_connected: list[str] | None = None) -> str:
     cognee_section = _COGNEE_SYSTEM_PROMPT if cognee else ""
-    return _BASE_SYSTEM_PROMPT.format(cognee_section=cognee_section)
+    mcp_section = _mcp_system_prompt(mcp_connected or [])
+    return _BASE_SYSTEM_PROMPT.format(
+        cognee_section=cognee_section,
+        mcp_section=mcp_section,
+    )
 
 
 def build_tools(*, cognee: bool) -> list:
@@ -393,8 +412,11 @@ def _build_llm():
     )
 
 
-def build_agent(project_root: Path):
-    """Create the LangChain agent and session handles for one project."""
+def build_agent(project_root: Path) -> tuple:
+    """Create the LangChain agent and session handles for one project.
+
+    Returns (agent, config, checkpointer, thread_id, mcp_load_result).
+    """
     agent_debug = os.getenv("AGENT_DEBUG", "").lower() in ("1", "true", "yes")
 
     llm = _build_llm()
@@ -402,11 +424,18 @@ def build_agent(project_root: Path):
     checkpointer = open_session_checkpointer(project_root)
     config = session_config(thread_id)
     cognee = cognee_memory_enabled()
+    mcp = load_mcp_tools()
+
+    tools = build_tools(cognee=cognee)
+    tools.extend(mcp.tools)
 
     agent = create_agent(
         model=llm,
-        tools=build_tools(cognee=cognee),
-        system_prompt=build_system_prompt(cognee=cognee),
+        tools=tools,
+        system_prompt=build_system_prompt(
+            cognee=cognee,
+            mcp_connected=mcp.connected,
+        ),
         debug=agent_debug,
         checkpointer=checkpointer,
         middleware=[
@@ -417,4 +446,4 @@ def build_agent(project_root: Path):
         ],
     )
 
-    return agent, config, checkpointer, thread_id
+    return agent, config, checkpointer, thread_id, mcp

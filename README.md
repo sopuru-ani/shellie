@@ -53,19 +53,32 @@ Close and reopen your terminal after `pipx ensurepath` so `shellie` is on your P
 Run this **once** from any directory — pipx manages its own install location (you do not need a special folder for the tool itself):
 
 ```bash
-# Base install (chat + session memory only — no Cognee)
+# Base install (chat + session memory only — no Cognee / MCP extras)
 pipx install git+https://github.com/sopuru-ani/shellie.git
 
 # With Cognee long-term memory (heavier install)
 pipx install "shellie[cognee] @ git+https://github.com/sopuru-ani/shellie.git"
+
+# With MCP client (GitHub tools, etc.)
+pipx install "shellie[mcp] @ git+https://github.com/sopuru-ani/shellie.git"
+
+# Both extras
+pipx install "shellie[cognee,mcp] @ git+https://github.com/sopuru-ani/shellie.git"
 ```
 
-Base install is quick. The `[cognee]` extra adds Cognee and may take several minutes.
+Base install is quick. The `[cognee]` extra adds Cognee and may take several minutes. The `[mcp]` extra adds `langchain-mcp-adapters` (and registers the `shellie-mcp` CLI).
 
 **Add Cognee later** (if you installed without it):
 
 ```bash
 pipx inject shellie cognee
+```
+
+**Add MCP later:**
+
+```bash
+pipx inject shellie langchain-mcp-adapters
+# or: pip install 'shellie[mcp]'
 ```
 
 **Optional YAML linting** (for `read_lint` on `.yml` / `.yaml`):
@@ -125,15 +138,16 @@ Config:        /home/you/Code/my-new-app/.env
 Match the update command to how you installed:
 
 ```bash
-# Base install (no Cognee)
+# Base install (no Cognee / MCP extras)
 pipx reinstall shellie
 # or: pipx install --force git+https://github.com/sopuru-ani/shellie.git
 
-# Installed with the Cognee extra
-pipx install --force "shellie[cognee] @ git+https://github.com/sopuru-ani/shellie.git"
+# Installed with extras — reinstall with the same extras
+pipx install --force "shellie[cognee,mcp] @ git+https://github.com/sopuru-ani/shellie.git"
 
 # Base install + inject — reinstall keeps injects; after a plain --force install, re-inject:
 pipx inject shellie cognee
+pipx inject shellie langchain-mcp-adapters
 ```
 
 ---
@@ -161,8 +175,10 @@ source venv/bin/activate
 Install (pick one):
 
 ```bash
-pip install -e .                    # base — no Cognee
+pip install -e .                    # base — no Cognee / MCP
 pip install -e ".[cognee]"          # with Cognee memory
+pip install -e ".[mcp]"             # with MCP client + shellie-mcp
+pip install -e ".[cognee,mcp]"      # both
 ```
 
 Each new terminal session (unless you use pipx or an alias):
@@ -216,6 +232,40 @@ Restart `shellie` after changing `.env`. Startup shows e.g. `Cognee: ready` or `
 
 If `COGNEE_ENABLED` is omitted but `COGNEE_LLM_MODEL` or `COGNEE_EMBEDDING_MODEL` is set, Cognee is enabled automatically (backward compatible).
 
+### Optional MCP (device servers + per-project switch)
+
+MCP adds external tools (starting with **GitHub**) via curated remote servers. Config is split like Cognee:
+
+| Layer | Where | Effect |
+|-------|--------|--------|
+| **Install** | `shellie[mcp]` or `pipx inject shellie langchain-mcp-adapters` | Adapters + `shellie-mcp` CLI on the machine |
+| **Servers** | `~/.config/shellie/mcp.json` (via `shellie-mcp enable` / `disable`) | Which curated servers are on this device |
+| **Secrets** | Prefer `~/.config/shellie/.env` (PAT saved by `shellie-mcp enable`) | Tokens — never stored in `mcp.json` |
+| **Runtime** | `MCP_ENABLED=1` in **project** `.env` (`shellie-mcp on` / `off`) | Whether this project loads MCP tools |
+
+**One-time device setup (GitHub):**
+
+```bash
+shellie-mcp enable github   # prompts for PAT if missing; validates; saves to device .env
+shellie-mcp list
+```
+
+**Per project** (from that project's directory):
+
+```bash
+cd ~/Code/my-app
+shellie-mcp on              # writes MCP_ENABLED=1 to this project's .env
+shellie                     # banner should show MCP connected / tools loaded
+```
+
+Turn the client off without uninstalling or disabling the device server:
+
+```bash
+shellie-mcp off             # MCP_ENABLED=0
+```
+
+Useful commands: `shellie-mcp status`, `shellie-mcp list`, `shellie-mcp enable|disable <name>`, `shellie-mcp on|off`. Restart `shellie` after changing enablement so tools reload.
+
 ---
 
 ## REPL commands
@@ -266,8 +316,9 @@ Quit with `/bye`, restart, and ask about your package manager. If it recalls the
 | `file_read` / `file_write` | Read or overwrite whole project files |
 | `file_edit` | Exact search-and-replace patch in an existing file |
 | `file_grep` | Search file contents (pattern + optional path/glob) |
-| `search` / `wikipedia` | External lookup when needed |
+| `search` / `wikipedia` / `web_fetch` | External lookup when needed |
 | `remember_*` / `recall_*` | Long-term Cognee memory |
+| `github_*` (etc.) | MCP tools when `shellie[mcp]` is installed, a server is enabled, and `MCP_ENABLED=1` |
 
 Interactive commands (`gh auth login`, `ssh`, editors, REPLs) are blocked — use `/shell` instead. Sensitive commands (`git push`, `rm`, `sudo`, package installs) require typing `yes` at a prompt.
 
@@ -280,6 +331,8 @@ Copy [`.env.example`](.env.example) into **your project root** and fill in API k
 **Minimum for chat + session** — only `LLM_*` is required.
 
 **Cognee** — set `COGNEE_ENABLED=1` and the `COGNEE_*` block below when you want long-term memory. Chat and Cognee use separate LLM settings.
+
+**MCP** — set `MCP_ENABLED=1` (or run `shellie-mcp on`) after installing `shellie[mcp]` and enabling a server with `shellie-mcp enable github`. Prefer putting `GITHUB_PERSONAL_ACCESS_TOKEN` in the device `.env` (`~/.config/shellie/.env`).
 
 **Chat agent** (`LLM_*`) — LangChain; `LLM_PROVIDER` selects the client
 (`openai` default, or `anthropic` / `google`):
@@ -325,6 +378,7 @@ The `hosted_vllm/` prefix on `COGNEE_LLM_MODEL` tells LiteLLM to use your endpoi
 │   ├── tools.py         # Shell, files, search, memory tools
 │   ├── session_memory.py
 │   ├── cognee_memory.py
+│   ├── mcp/             # Optional MCP client + `shellie-mcp` CLI
 │   ├── shell.py
 │   └── ui.py
 ├── pyproject.toml
@@ -336,7 +390,7 @@ The `hosted_vllm/` prefix on `COGNEE_LLM_MODEL` tells LiteLLM to use your endpoi
 
 ## Dependencies
 
-LangChain, LangGraph (SQLite checkpointer), DuckDuckGo search, Wikipedia, python-dotenv, pydantic, **ruff** (Python linting for `read_lint`). Optional: **Cognee** via `shellie[cognee]`; **yamllint** via `shellie[lint]` or `pipx inject shellie yamllint` (restart Shellie in a new terminal after inject). LLM backend is any OpenAI-compatible API (NVIDIA NIM, Ollama, etc.) configured in the **project's** `.env`.
+LangChain, LangGraph (SQLite checkpointer), DuckDuckGo search, Wikipedia, python-dotenv, pydantic, httpx, beautifulsoup4, **ruff** (Python linting for `read_lint`). Optional: **Cognee** via `shellie[cognee]`; **MCP** via `shellie[mcp]` (`langchain-mcp-adapters` + `shellie-mcp`); **yamllint** via `shellie[lint]` or `pipx inject`. LLM backend is any supported provider configured in the **project's** `.env`.
 
 ---
 
