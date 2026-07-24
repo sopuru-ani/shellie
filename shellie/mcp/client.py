@@ -2,11 +2,15 @@
 
 Requires shellie[mcp] (langchain-mcp-adapters). Call load_mcp_tools() from the
 agent after bootstrap() so .env tokens are available.
+
+MCP tools from the adapter are async-only (coroutine=, no func=). Shellie's
+agent uses sync stream/invoke, so we attach a sync wrapper after load.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +64,53 @@ def build_mcp_connections() -> tuple[dict[str, dict[str, Any]], list[str]]:
     return connections, errors
 
 
+def _run_async(coro: Any) -> Any:
+    """Drive an async MCP coroutine to completion from sync tool invoke."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    # A loop is already running — asyncio.run would fail; use a fresh thread.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _with_sync_invoke(tool: Any) -> Any:
+    """Attach a sync func= when the MCP tool only exposes coroutine=.
+
+    Shellie builtins already have sync funcs — getattr checks skip those if
+    they ever passed through here. MCP adapter tools typically have coroutine
+    only, which is what caused NotImplementedError on sync invoke.
+    """
+    if getattr(tool, "func", None) is not None:
+        return tool
+
+    coro_fn = getattr(tool, "coroutine", None)
+    if coro_fn is None:
+        return tool
+
+    def sync_fn(*args: Any, **kwargs: Any) -> Any:
+        return _run_async(coro_fn(*args, **kwargs))
+
+    from langchain_core.tools import StructuredTool
+
+    return StructuredTool(
+        name=tool.name,
+        description=tool.description or "",
+        args_schema=tool.args_schema,
+        coroutine=coro_fn,
+        func=sync_fn,
+        response_format=getattr(tool, "response_format", "content_and_artifact"),
+        metadata=getattr(tool, "metadata", None),
+        handle_tool_error=getattr(tool, "handle_tool_error", False),
+    )
+
+
+def _ensure_sync_tools(tools: list[Any]) -> list[Any]:
+    return [_with_sync_invoke(t) for t in tools]
+
+
 async def _load_tools_async(
     connections: dict[str, dict[str, Any]],
 ) -> list[Any]:
@@ -92,6 +143,6 @@ def load_mcp_tools() -> McpLoadResult:
         result.errors.append(f"failed to load MCP tools: {exc}")
         return result
 
-    result.tools = list(tools)
+    result.tools = _ensure_sync_tools(list(tools))
     result.connected = sorted(connections.keys())
     return result
