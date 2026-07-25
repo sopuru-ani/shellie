@@ -2,14 +2,15 @@
 
 Installed = langchain-mcp-adapters is importable.
 Enabled = MCP_ENABLED is truthy in the environment.
-Server enable/disable lives in ~/.config/shellie/mcp.json (see config.py).
+Curated toggles: ~/.config/shellie/mcp.json
+Custom toggles:  ~/.config/shellie/mcp_custom.json
 """
 
 from __future__ import annotations
 
 import os
 
-from shellie.mcp.config import enabled_server_names
+from shellie.mcp.config import enabled_custom_server_names, enabled_server_names
 
 _mcp_available: bool | None = None
 
@@ -50,7 +51,8 @@ def mcp_status_message() -> str:
         )
     if not mcp_enabled():
         return "disabled — set MCP_ENABLED=1 in .env (device or project)"
-    enabled = enabled_server_names()
-    if not enabled:
+    labels = list(enabled_server_names())
+    labels.extend(f"{name} (custom)" for name in enabled_custom_server_names())
+    if not labels:
         return "client ready — no mcp servers enabled"
-    return "client ready — " + ", ".join(enabled)
+    return "client ready — " + ", ".join(labels)

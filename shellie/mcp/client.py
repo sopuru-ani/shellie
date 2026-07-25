@@ -1,4 +1,7 @@
-"""Load LangChain tools from enabled MCP servers (device mcp.json + catalog).
+"""Load LangChain tools from enabled MCP servers.
+
+Curated: device mcp.json + catalog.py
+Custom:  device mcp_custom.json + mcp_custom_catalog.json
 
 Requires shellie[mcp] (langchain-mcp-adapters). Call load_mcp_tools() from the
 agent after bootstrap() so .env tokens are available.
@@ -15,7 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from shellie.mcp.catalog import connection_for_server
-from shellie.mcp.config import enabled_server_names
+from shellie.mcp.config import enabled_custom_server_names, enabled_server_names
+from shellie.mcp.custom_catalog import connection_for_custom_server
 from shellie.mcp.mcp import mcp_available, mcp_enabled
 
 
@@ -49,18 +53,31 @@ class McpLoadResult:
 
 
 def build_mcp_connections() -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Build MultiServerMCPClient connection map for enabled curated servers.
+    """Build MultiServerMCPClient connection map for enabled curated + custom servers.
 
-    Returns (connections, errors). Servers that fail (e.g. missing PAT) are
-    skipped and listed in errors so other servers can still load.
+    Returns (connections, errors). Servers that fail (e.g. missing PAT / bad
+    command) are skipped and listed in errors so other servers can still load.
     """
     connections: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
+
     for name in enabled_server_names():
         try:
             connections[name] = connection_for_server(name)
         except ValueError as exc:
             errors.append(str(exc))
+
+    for name in enabled_custom_server_names():
+        if name in connections:
+            errors.append(
+                f"custom MCP server {name!r} skipped — name collides with curated"
+            )
+            continue
+        try:
+            connections[name] = connection_for_custom_server(name)
+        except ValueError as exc:
+            errors.append(str(exc))
+
     return connections, errors
 
 
@@ -118,7 +135,7 @@ async def _load_tools_async(
 
     client = MultiServerMCPClient(
         connections,
-        tool_name_prefix=True,  # github_list_issues vs collisions later
+        tool_name_prefix=True,  # github_list_issues / weather_get_forecast
     )
     return await client.get_tools()
 

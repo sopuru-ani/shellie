@@ -10,6 +10,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI as ChatGoogle
 from langchain_anthropic import ChatAnthropic
 from shellie.cognee_memory import cognee_memory_enabled
 from shellie.mcp.client import load_mcp_tools
+from shellie.mcp.mcp import mcp_enabled
 from shellie.session_memory import (
     open_session_checkpointer,
     project_thread_id,
@@ -305,23 +306,45 @@ _COGNEE_SYSTEM_PROMPT = """- Cognee long-term memory (recall_* / remember_*):
 """
 
 
-def _mcp_system_prompt(connected: list[str]) -> str:
-    if not connected:
+def _mcp_system_prompt(connected: list[str], *, mcp_client: bool) -> str:
+    if not mcp_client:
         return ""
-    servers = ", ".join(connected)
-    return f"""- MCP external tools ({servers}):
-  Prefixed tools (e.g. github_*) come from MCP servers — not Shellie builtins.
-  Use them when the user asks for work those integrations handle (GitHub: repos, issues,
-  PRs, search). Prefer MCP over terminal_run / gh when a matching tool exists.
+    servers = ", ".join(connected) if connected else "(none loaded this session)"
+    return f"""- MCP external tools (connected this session: {servers}):
+  Prefixed tools (e.g. github_*, weather_*) come from MCP servers — not Shellie builtins.
+  Use them when the user asks for work those integrations handle. Prefer MCP over
+  terminal_run / gh when a matching tool exists.
   If an MCP tool fails, report the error; do not invent API results.
   Do not create, update, or delete remote/GitHub state unless the user clearly asked.
+
+  Custom MCP servers (when the user asks you to add a capability like weather):
+  1. Create a folder under ~/.config/shellie/mcp_servers/<name>/ (FastMCP stdio server).
+  2. Prefer a local venv there (uv venv + install mcp/fastmcp and deps). Point the catalog
+     command at that venv's python.exe (Windows) or python (Unix) — do not rely on activate.
+  3. Secrets for that server: ~/.config/shellie/mcp_servers/<name>/.env (server loads them),
+     not mcp_custom.json / mcp_custom_catalog.json.
+  4. Register connection in ~/.config/shellie/mcp_custom_catalog.json via
+     upsert_custom_catalog_entry / shellie APIs, or write the JSON carefully:
+     transport stdio, command=<venv python>, args=[<path to server.py>].
+  5. Enable with shellie-mcp enable <name> (or set_custom_server_enabled).
+  6. Tell the user to restart Shellie (and ensure MCP_ENABLED=1 / shellie-mcp on) so tools load.
+  Do not invent that custom tools already work until after a successful reconnect/restart.
+  Ask before installing global tools (e.g. uv) or writing under the device config dir.
 
 """
 
 
-def build_system_prompt(*, cognee: bool, mcp_connected: list[str] | None = None) -> str:
+def build_system_prompt(
+    *,
+    cognee: bool,
+    mcp_connected: list[str] | None = None,
+    mcp_client: bool = False,
+) -> str:
     cognee_section = _COGNEE_SYSTEM_PROMPT if cognee else ""
-    mcp_section = _mcp_system_prompt(mcp_connected or [])
+    mcp_section = _mcp_system_prompt(
+        mcp_connected or [],
+        mcp_client=mcp_client,
+    )
     return _BASE_SYSTEM_PROMPT.format(
         cognee_section=cognee_section,
         mcp_section=mcp_section,
@@ -435,6 +458,7 @@ def build_agent(project_root: Path) -> tuple:
         system_prompt=build_system_prompt(
             cognee=cognee,
             mcp_connected=mcp.connected,
+            mcp_client=mcp_enabled(),
         ),
         debug=agent_debug,
         checkpointer=checkpointer,

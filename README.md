@@ -234,13 +234,16 @@ If `COGNEE_ENABLED` is omitted but `COGNEE_LLM_MODEL` or `COGNEE_EMBEDDING_MODEL
 
 ### Optional MCP (device servers + per-project switch)
 
-MCP adds external tools (starting with **GitHub**) via curated remote servers. Config is split like Cognee:
+MCP adds external tools via curated remote servers (e.g. **GitHub**) and optional **custom** local stdio servers you or the agent register on the device.
 
 | Layer | Where | Effect |
 |-------|--------|--------|
 | **Install** | `shellie[mcp]` or `pipx inject shellie langchain-mcp-adapters` | Adapters + `shellie-mcp` CLI on the machine |
-| **Servers** | `~/.config/shellie/mcp.json` (via `shellie-mcp enable` / `disable`) | Which curated servers are on this device |
-| **Secrets** | Prefer `~/.config/shellie/.env` (PAT saved by `shellie-mcp enable`) | Tokens — never stored in `mcp.json` |
+| **Curated servers** | `~/.config/shellie/mcp.json` (`shellie-mcp enable` / `disable`) | Built-in catalog (GitHub, …) |
+| **Custom toggles** | `~/.config/shellie/mcp_custom.json` | Enable flags for user/agent-defined servers |
+| **Custom catalog** | `~/.config/shellie/mcp_custom_catalog.json` | How to spawn each custom server (`stdio` + `command` + `args`) |
+| **Custom code** | `~/.config/shellie/mcp_servers/<name>/` | FastMCP projects + their own venvs / `.env` secrets |
+| **Secrets (curated)** | Prefer `~/.config/shellie/.env` (PAT from `shellie-mcp enable`) | Never store tokens in the JSON files |
 | **Runtime** | `MCP_ENABLED=1` in **project** `.env` (`shellie-mcp on` / `off`) | Whether this project loads MCP tools |
 
 **One-time device setup (GitHub):**
@@ -250,21 +253,31 @@ shellie-mcp enable github   # prompts for PAT if missing; validates; saves to de
 shellie-mcp list
 ```
 
+**Custom local server (after code + catalog entry exist):**
+
+```bash
+# mcp_custom_catalog.json already has e.g. weather → venv python + server.py
+shellie-mcp enable weather
+shellie-mcp list            # shows weather under Custom
+```
+
 **Per project** (from that project's directory):
 
 ```bash
 cd ~/Code/my-app
 shellie-mcp on              # writes MCP_ENABLED=1 to this project's .env
-shellie                     # banner should show MCP connected / tools loaded
+shellie                     # banner: client ready — github, weather (custom)
 ```
 
-Turn the client off without uninstalling or disabling the device server:
+Turn the client off without uninstalling or disabling device servers:
 
 ```bash
 shellie-mcp off             # MCP_ENABLED=0
 ```
 
-Useful commands: `shellie-mcp status`, `shellie-mcp list`, `shellie-mcp enable|disable <name>`, `shellie-mcp on|off`. Restart `shellie` after changing enablement so tools reload.
+Useful commands: `shellie-mcp status`, `shellie-mcp list`, `shellie-mcp enable|disable <name>`, `shellie-mcp on|off`. Restart `shellie` after changing enablement or registering a new custom server so tools reload.
+
+When Shellie scaffolds a new capability (e.g. weather), it should write under `mcp_servers/`, register `mcp_custom_catalog.json`, enable the toggle, then ask you to restart — it does not hot-reload MCP tools mid-session.
 
 ---
 
@@ -318,7 +331,7 @@ Quit with `/bye`, restart, and ask about your package manager. If it recalls the
 | `file_grep` | Search file contents (pattern + optional path/glob) |
 | `search` / `wikipedia` / `web_fetch` | External lookup when needed |
 | `remember_*` / `recall_*` | Long-term Cognee memory |
-| `github_*` (etc.) | MCP tools when `shellie[mcp]` is installed, a server is enabled, and `MCP_ENABLED=1` |
+| `github_*` / `<server>_*` | MCP tools when installed, servers enabled, and `MCP_ENABLED=1` (curated + custom) |
 
 Interactive commands (`gh auth login`, `ssh`, editors, REPLs) are blocked — use `/shell` instead. Sensitive commands (`git push`, `rm`, `sudo`, package installs) require typing `yes` at a prompt.
 
@@ -332,7 +345,7 @@ Copy [`.env.example`](.env.example) into **your project root** and fill in API k
 
 **Cognee** — set `COGNEE_ENABLED=1` and the `COGNEE_*` block below when you want long-term memory. Chat and Cognee use separate LLM settings.
 
-**MCP** — set `MCP_ENABLED=1` (or run `shellie-mcp on`) after installing `shellie[mcp]` and enabling a server with `shellie-mcp enable github`. Prefer putting `GITHUB_PERSONAL_ACCESS_TOKEN` in the device `.env` (`~/.config/shellie/.env`).
+**MCP** — set `MCP_ENABLED=1` (or run `shellie-mcp on`) after installing `shellie[mcp]` and enabling servers (`shellie-mcp enable github`, and/or custom servers registered in `mcp_custom_catalog.json`). Prefer putting `GITHUB_PERSONAL_ACCESS_TOKEN` in the device `.env` (`~/.config/shellie/.env`). Custom server secrets belong next to that server under `mcp_servers/<name>/.env`.
 
 **Chat agent** (`LLM_*`) — LangChain; `LLM_PROVIDER` selects the client
 (`openai` default, or `anthropic` / `google`):

@@ -1,8 +1,9 @@
-"""shellie-mcp — manage curated MCP servers and the per-project client switch.
+"""shellie-mcp — manage curated/custom MCP servers and the per-project client switch.
 
-Device:  ~/.config/shellie/mcp.json  (which servers are enabled)
-Project: .env MCP_ENABLED=1          (whether this Shellie run loads them)
-Secrets: device/project .env         (never mcp.json)
+Curated:  ~/.config/shellie/mcp.json + catalog.py
+Custom:   ~/.config/shellie/mcp_custom.json + mcp_custom_catalog.json
+Project:  .env MCP_ENABLED=1 (whether this Shellie run loads them)
+Secrets:  device/project .env or per-server .env — never the JSON toggle/catalog files
 """
 
 from __future__ import annotations
@@ -16,10 +17,21 @@ from dotenv import dotenv_values
 from shellie.mcp.auth import ensure_pat_for_entry, upsert_project_env
 from shellie.mcp.catalog import catalog_server_names, get_catalog_entry
 from shellie.mcp.config import (
+    custom_mcp_config_path,
+    ensure_custom_mcp_config,
     ensure_mcp_config,
+    is_custom_server_enabled,
     is_server_enabled,
+    known_custom_server_names,
     mcp_config_path,
+    set_custom_server_enabled,
     set_server_enabled,
+)
+from shellie.mcp.custom_catalog import (
+    custom_catalog_server_names,
+    custom_mcp_catalog_path,
+    ensure_custom_mcp_catalog,
+    get_custom_catalog_entry,
 )
 from shellie.mcp.mcp import mcp_enabled, mcp_status_message
 from shellie.paths import DEVICE_CONFIG_DIR, find_project_root
@@ -48,11 +60,23 @@ def _load_project_env() -> None:
             os.environ[key] = value
 
 
+def _known_names_hint() -> str:
+    curated = ", ".join(catalog_server_names()) or "(none)"
+    custom = ", ".join(custom_catalog_server_names()) or "(none)"
+    return f"Curated: {curated}. Custom catalog: {custom}."
+
+
 def cmd_list(_args: argparse.Namespace) -> int:
-    """Show curated servers and whether each is enabled / has a token env set."""
+    """Show curated + custom servers and enable / config state."""
     ensure_mcp_config()
-    print(f"Config: {mcp_config_path()}")
+    ensure_custom_mcp_config()
+    ensure_custom_mcp_catalog()
+
+    print(f"Curated config: {mcp_config_path()}")
+    print(f"Custom toggles: {custom_mcp_config_path()}")
+    print(f"Custom catalog: {custom_mcp_catalog_path()}")
     print()
+    print("Curated:")
     for name in catalog_server_names():
         entry = get_catalog_entry(name) or {}
         enabled = is_server_enabled(name)
@@ -62,6 +86,29 @@ def cmd_list(_args: argparse.Namespace) -> int:
         token_note = "token set" if has_token else f"missing {token_env}"
         desc = entry.get("description", "")
         print(f"  {name:12} [{flag}]  {token_note}")
+        if desc:
+            print(f"               {desc}")
+
+    print()
+    print("Custom:")
+    custom_names = sorted(
+        set(custom_catalog_server_names()) | set(known_custom_server_names())
+    )
+    if not custom_names:
+        print("  (none — register in mcp_custom_catalog.json, then enable)")
+        return 0
+
+    for name in custom_names:
+        entry = get_custom_catalog_entry(name) or {}
+        enabled = is_custom_server_enabled(name)
+        flag = "on " if enabled else "off"
+        if not entry:
+            note = "no catalog entry"
+        else:
+            command = entry.get("command") or "?"
+            note = f"stdio → {command}"
+        desc = entry.get("description", "")
+        print(f"  {name:12} [{flag}]  {note}")
         if desc:
             print(f"               {desc}")
     return 0
@@ -74,60 +121,96 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print(f"Device config: {DEVICE_CONFIG_DIR}")
     print(f"MCP:           {mcp_status_message()}")
     print(f"MCP_ENABLED:   {'yes' if mcp_enabled() else 'no'}")
+    custom_on = [
+        n for n in known_custom_server_names() if is_custom_server_enabled(n)
+    ]
+    if custom_on:
+        print(f"Custom on:     {', '.join(custom_on)}")
     return 0
 
 
 def cmd_enable(args: argparse.Namespace) -> int:
-    """Ensure credentials (if needed), then enable server in device mcp.json."""
+    """Enable a curated or custom server (device toggles)."""
     name = args.name.strip().casefold()
+
+    # Curated first (PAT flow)
     entry = get_catalog_entry(name)
-    if entry is None:
-        known = ", ".join(catalog_server_names())
-        print(f"Unknown MCP server {args.name!r}. Known: {known}", file=sys.stderr)
+    if entry is not None:
+        auth = (entry.get("auth") or "pat").strip().casefold()
+        if entry.get("token_env"):
+            if auth == "pat":
+                err = ensure_pat_for_entry(entry)
+                if err:
+                    print(err, file=sys.stderr)
+                    return 1
+            else:
+                print(
+                    f"Unsupported auth {auth!r} for {name!r} (only 'pat' for now).",
+                    file=sys.stderr,
+                )
+                return 1
+        try:
+            set_server_enabled(name, True)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"Enabled curated {name} in {mcp_config_path()}")
+        print("Tip: turn the client on for this project with: shellie-mcp on")
+        return 0
+
+    # Custom: must already be in mcp_custom_catalog.json
+    custom_entry = get_custom_catalog_entry(name)
+    if custom_entry is None:
+        print(
+            f"Unknown MCP server {args.name!r}. {_known_names_hint()}",
+            file=sys.stderr,
+        )
         return 1
 
-    auth = (entry.get("auth") or "pat").strip().casefold()
-    if entry.get("token_env"):
-        if auth == "pat":
-            err = ensure_pat_for_entry(entry)
-            if err:
-                print(err, file=sys.stderr)
-                return 1
-        else:
-            print(
-                f"Unsupported auth {auth!r} for {name!r} (only 'pat' for now).",
-                file=sys.stderr,
-            )
-            return 1
-
     try:
-        set_server_enabled(name, True)
+        set_custom_server_enabled(name, True)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
-    print(f"Enabled {name} in {mcp_config_path()}")
+    print(f"Enabled custom {name} in {custom_mcp_config_path()}")
     print("Tip: turn the client on for this project with: shellie-mcp on")
+    print("Restart shellie so custom tools load.")
     return 0
 
 
 def cmd_disable(args: argparse.Namespace) -> int:
-    """Mark a curated server disabled in device mcp.json (does not delete tokens)."""
+    """Disable a curated or custom server (does not delete tokens / catalog)."""
     name = args.name.strip().casefold()
-    if get_catalog_entry(name) is None:
-        known = ", ".join(catalog_server_names())
-        print(f"Unknown MCP server {args.name!r}. Known: {known}", file=sys.stderr)
-        return 1
 
-    try:
-        set_server_enabled(name, False)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+    if get_catalog_entry(name) is not None:
+        try:
+            set_server_enabled(name, False)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"Disabled curated {name} in {mcp_config_path()}")
+        print("(Token left in .env if present — only the server toggle changed.)")
+        return 0
 
-    print(f"Disabled {name} in {mcp_config_path()}")
-    print("(Token left in .env if present — only the server toggle changed.)")
-    return 0
+    if (
+        get_custom_catalog_entry(name) is not None
+        or name in known_custom_server_names()
+    ):
+        try:
+            set_custom_server_enabled(name, False)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"Disabled custom {name} in {custom_mcp_config_path()}")
+        print("(Catalog entry left in place — only the toggle changed.)")
+        return 0
+
+    print(
+        f"Unknown MCP server {args.name!r}. {_known_names_hint()}",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def cmd_on(_args: argparse.Namespace) -> int:
@@ -157,18 +240,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_list = sub.add_parser("list", help="List curated MCP servers and enable state")
+    p_list = sub.add_parser(
+        "list", help="List curated and custom MCP servers and enable state"
+    )
     p_list.set_defaults(func=cmd_list)
 
     p_status = sub.add_parser("status", help="Show MCP client / config status")
     p_status.set_defaults(func=cmd_status)
 
-    p_enable = sub.add_parser("enable", help="Enable a curated MCP server (device)")
-    p_enable.add_argument("name", help="Server id (e.g. github)")
+    p_enable = sub.add_parser(
+        "enable", help="Enable a curated or custom MCP server (device)"
+    )
+    p_enable.add_argument("name", help="Server id (e.g. github, weather)")
     p_enable.set_defaults(func=cmd_enable)
 
-    p_disable = sub.add_parser("disable", help="Disable a curated MCP server (device)")
-    p_disable.add_argument("name", help="Server id (e.g. github)")
+    p_disable = sub.add_parser(
+        "disable", help="Disable a curated or custom MCP server (device)"
+    )
+    p_disable.add_argument("name", help="Server id (e.g. github, weather)")
     p_disable.set_defaults(func=cmd_disable)
 
     p_on = sub.add_parser("on", help="Turn MCP client on for this project (.env)")
