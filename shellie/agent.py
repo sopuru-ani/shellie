@@ -25,6 +25,7 @@ from shellie.tools import (
     recall_project,
     remember_device,
     remember_project,
+    register_custom_mcp_server,
     request_shell_approval,
     search_tool,
     terminal_run,
@@ -202,9 +203,14 @@ Understanding the project or codebase:
   file contents into the reply unless the user asked to see a specific file.
 - If you have only listed a directory, say what you know from that and what you still
   need to read — do not invent architecture, line counts, or behavior.
-- Prefer file_read for source code; use file_grep to locate symbols across files; use
+-   Prefer file_read for source code; use file_grep to locate symbols across files; use
   terminal_run for git status, wc -l, dir/ls, and similar. On Windows prefer dir / where;
   do not start with Unix-only ls unless you already know a Unix shell is available.
+  Windows terminal_run uses cmd.exe — NEVER bash heredocs or Unix-only redirects such as
+  `python - <<"PY"`, `<<'EOF'`, or `cat <<EOF`. Those hang the persistent shell.
+  To create/overwrite files: use file_write or file_edit — not PowerShell Set-Content /
+  here-strings and not shell heredocs. Keep request_shell_approval to short command
+  strings only (venv, pip/uv install); never paste whole file bodies into approved commands.
 
 Interactive commands — never run via terminal_run:
 terminal_run cannot handle programs that need keyboard input (login wizards, ssh sessions,
@@ -321,12 +327,14 @@ def _mcp_system_prompt(connected: list[str], *, mcp_client: bool) -> str:
   1. Create a folder under ~/.config/shellie/mcp_servers/<name>/ (FastMCP stdio server).
   2. Prefer a local venv there (uv venv + install mcp/fastmcp and deps). Point the catalog
      command at that venv's python.exe (Windows) or python (Unix) — do not rely on activate.
-  3. Secrets for that server: ~/.config/shellie/mcp_servers/<name>/.env (server loads them),
+  3. Write server.py with file_write (absolute path). Do NOT write it via terminal_run /
+     PowerShell / bash heredocs.
+  4. Secrets for that server: ~/.config/shellie/mcp_servers/<name>/.env (server loads them),
      not mcp_custom.json / mcp_custom_catalog.json.
-  4. Register connection in ~/.config/shellie/mcp_custom_catalog.json via
-     upsert_custom_catalog_entry / shellie APIs, or write the JSON carefully:
-     transport stdio, command=<venv python>, args=[<path to server.py>].
-  5. Enable with shellie-mcp enable <name> (or set_custom_server_enabled).
+  5. Register with register_custom_mcp_server(name, command, args) using absolute paths.
+     That writes the catalog entry AND enables the server. Never create/edit
+     mcp_custom_catalog.json or mcp_custom.json with file_write / shell — this tool owns them.
+     If the name already exists, pick a different name (no overwrite).
   6. Tell the user to restart Shellie (and ensure MCP_ENABLED=1 / shellie-mcp on) so tools load.
   Do not invent that custom tools already work until after a successful reconnect/restart.
   Ask before installing global tools (e.g. uv) or writing under the device config dir.
@@ -363,6 +371,7 @@ def build_tools(*, cognee: bool) -> list:
         file_grep,
         file_edit,
         file_write,
+        register_custom_mcp_server,
         read_lint,
     ]
     if cognee:

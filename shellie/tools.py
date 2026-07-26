@@ -19,6 +19,7 @@ from shellie.cognee_memory import (
     remember_device as _remember_device,
     remember_project as _remember_project,
 )
+from shellie.mcp.custom_catalog import register_new_custom_server
 from shellie.shell import get_shell
 from shellie.web_fetch import fetch_url as _fetch_url
 from shellie.ui import (
@@ -582,6 +583,33 @@ def file_write(filepath: str, content: str) -> str:
     return (
         f"File {filepath} successfully written ({len(content)} characters). "
         "Reply to the user now; do not keep re-reading or shell-paging this file."
+    )
+
+
+@tool
+def register_custom_mcp_server(
+    name: str,
+    command: str,
+    args: list[str],
+    description: str = "",
+    cwd: str = "",
+) -> str:
+    """Register a new custom local MCP server (catalog + enable). Never overwrites.
+
+    Call this AFTER server.py and the venv exist. Pass absolute paths:
+    - name: server id (e.g. weather). Must not already exist or collide with curated ids.
+    - command: absolute path to that server's venv python (python.exe on Windows).
+    - args: usually a one-element list with the absolute path to server.py.
+    Optional description / cwd. Enables the server in mcp_custom.json.
+    On success, tell the user to restart Shellie. Do not edit mcp_custom_catalog.json
+    or mcp_custom.json with file_write — this tool owns those files.
+    """
+    return register_new_custom_server(
+        name,
+        command,
+        args,
+        description=description or None,
+        cwd=cwd or None,
     )
 
 

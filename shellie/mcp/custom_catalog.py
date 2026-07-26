@@ -26,7 +26,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from shellie.mcp.config import known_server_names
+from shellie.mcp.config import (
+    custom_mcp_config_path,
+    known_server_names,
+    set_custom_server_enabled,
+)
 from shellie.paths import DEVICE_CONFIG_DIR
 
 
@@ -151,6 +155,95 @@ def upsert_custom_catalog_entry(name: str, entry: dict[str, Any]) -> None:
     servers = catalog.setdefault("servers", {})
     servers[key] = stored
     save_custom_mcp_catalog(catalog)
+
+
+def _path_missing_warnings(command: str, args: list[str]) -> list[str]:
+    """Soft checks: missing command / path-like args (register still allowed)."""
+    warnings: list[str] = []
+    cmd = Path(command)
+    if not cmd.is_file():
+        warnings.append(f"command path does not exist yet: {command}")
+
+    for arg in args:
+        if not arg or not isinstance(arg, str):
+            continue
+        looks_like_path = (
+            "/" in arg
+            or "\\" in arg
+            or arg.endswith((".py", ".js", ".mjs", ".cjs", ".ts"))
+        )
+        if looks_like_path and not Path(arg).is_file():
+            warnings.append(f"args path does not exist yet: {arg}")
+    return warnings
+
+
+def register_new_custom_server(
+    name: str,
+    command: str,
+    args: list[str] | None = None,
+    *,
+    description: str | None = None,
+    cwd: str | None = None,
+) -> str:
+    """Register a *new* custom MCP server (catalog + enable). Never overwrites.
+
+    Returns a human-readable success or error string for the agent tool.
+    """
+    key = (name or "").strip().casefold()
+    if not key:
+        return "Error: name must be a non-empty server id (e.g. weather, location)."
+
+    if key in known_server_names():
+        return (
+            f"Error: {key!r} is a curated MCP server — pick a different name. "
+            "Curated servers use shellie-mcp enable / mcp.json, not the custom catalog."
+        )
+
+    existing = get_custom_catalog_entry(key)
+    if existing is not None:
+        return (
+            f"Error: custom MCP server {key!r} already exists. Choose a different name. "
+            f"To turn it off: shellie-mcp disable {key}. "
+            f"Existing recipe: command={existing.get('command')!r}, "
+            f"args={existing.get('args')!r}."
+        )
+
+    if not isinstance(command, str) or not command.strip():
+        return "Error: command must be a non-empty string (absolute path to venv python)."
+
+    if args is None:
+        args = []
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        return "Error: args must be a list of strings (usually [absolute path to server.py])."
+
+    entry: dict[str, Any] = {
+        "transport": "stdio",
+        "command": command.strip(),
+        "args": list(args),
+    }
+    if isinstance(description, str) and description.strip():
+        entry["description"] = description.strip()
+    if isinstance(cwd, str) and cwd.strip():
+        entry["cwd"] = cwd.strip()
+
+    warnings = _path_missing_warnings(entry["command"], entry["args"])
+
+    try:
+        upsert_custom_catalog_entry(key, entry)
+        set_custom_server_enabled(key, True)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    parts = [
+        f"Registered custom MCP server {key!r} and enabled it.",
+        f"Catalog: {custom_mcp_catalog_path()}.",
+        f"Toggle: {custom_mcp_config_path()}.",
+        "Tell the user to restart Shellie (with MCP_ENABLED=1 / shellie-mcp on) "
+        "so the new tools load. Do not claim the tools work until after restart.",
+    ]
+    if warnings:
+        parts.append("Warnings (still registered): " + "; ".join(warnings) + ".")
+    return " ".join(parts)
 
 
 def remove_custom_catalog_entry(name: str) -> bool:

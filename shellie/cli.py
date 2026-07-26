@@ -12,10 +12,14 @@ from shellie.config import bootstrap
 from shellie.images import encode_image_ref, looks_like_image_ref
 from shellie.mcp import mcp_status_message
 from shellie.paths import DEVICE_CONFIG_DIR, project_agent_dir, project_session_db
-from shellie.shell import close_shell, system_shell_env
+from shellie.shell import close_shell, interrupt_shell, system_shell_env
 from shellie.tools import clear_approved_commands
 from shellie.web_fetch import clear_web_fetch_cache
-from shellie.session_memory import clear_session, session_message_count
+from shellie.session_memory import (
+    clear_session,
+    repair_dangling_tool_calls,
+    session_message_count,
+)
 from shellie.ui import (
     agent_calling_tool,
     agent_reply_end,
@@ -298,6 +302,11 @@ def run_repl(project_root: Path) -> None:
         clear_approved_commands()
         clear_web_fetch_cache()
 
+        # Heal sessions left with AIMessage tool_calls and no ToolMessages (e.g. old Ctrl+C).
+        healed = repair_dangling_tool_calls(agent, session_config)
+        if healed:
+            print(f"(closed {healed} incomplete tool call(s) from a prior interrupt)")
+
         prev_count = session_message_count(agent, session_config)
 
         final_state = None
@@ -378,7 +387,11 @@ def run_repl(project_root: Path) -> None:
             if not msg_is_tool:
                 flush_pending()
         except KeyboardInterrupt:
+            interrupt_shell()
+            closed = repair_dangling_tool_calls(agent, session_config)
             run_error = "Interrupted."
+            if closed:
+                run_error += f" (closed {closed} open tool call(s) so chat can continue)"
         except Exception as exc:
             run_error = _format_run_error(exc)
         finally:

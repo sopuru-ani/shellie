@@ -26,6 +26,7 @@ from shellie.mcp.custom_catalog import (
     custom_mcp_catalog_path,
     custom_mcp_servers_dir,
     get_custom_catalog_entry,
+    register_new_custom_server,
     remove_custom_catalog_entry,
     upsert_custom_catalog_entry,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "get_custom_catalog_entry",
     "is_custom_server_enabled",
     "known_custom_server_names",
+    "register_new_custom_server",
     "remove_custom_catalog_entry",
     "set_custom_server_enabled",
     "upsert_custom_catalog_entry",

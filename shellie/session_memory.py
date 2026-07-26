@@ -5,9 +5,12 @@ import os
 import sqlite3
 from pathlib import Path
 
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from shellie.paths import project_session_db
+
+_INTERRUPT_TOOL_CONTENT = "Interrupted by user — tool did not finish."
 
 # Max graph steps per user turn (model call and tool round each count).
 # ~40 ≈ enough for a multi-file edit job; stops endless rewrite loops.
@@ -61,3 +64,57 @@ def session_message_count(agent, config: dict) -> int:
     if not snapshot or not snapshot.values:
         return 0
     return len(snapshot.values.get("messages", []))
+
+
+def _tool_call_id_and_name(tc) -> tuple[str | None, str]:
+    if isinstance(tc, dict):
+        return tc.get("id"), tc.get("name") or "tool"
+    return getattr(tc, "id", None), getattr(tc, "name", None) or "tool"
+
+
+def repair_dangling_tool_calls(agent, config: dict) -> int:
+    """Append synthetic ToolMessages for any open tool_calls in the checkpoint.
+
+    After Ctrl+C mid-tool, the last AIMessage may have tool_calls without matching
+    ToolMessages — the next model call then 400s. Returns how many were closed.
+    """
+    try:
+        snapshot = agent.get_state(config)
+    except Exception:
+        return 0
+    if not snapshot or not snapshot.values:
+        return 0
+    messages = snapshot.values.get("messages") or []
+    if not messages:
+        return 0
+
+    answered: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            tid = getattr(msg, "tool_call_id", None)
+            if tid:
+                answered.add(tid)
+
+    pending: list[ToolMessage] = []
+    for msg in messages:
+        if not isinstance(msg, AIMessage) or not msg.tool_calls:
+            continue
+        for tc in msg.tool_calls:
+            tc_id, name = _tool_call_id_and_name(tc)
+            if tc_id and tc_id not in answered:
+                pending.append(
+                    ToolMessage(
+                        content=_INTERRUPT_TOOL_CONTENT,
+                        tool_call_id=tc_id,
+                        name=name,
+                    )
+                )
+                answered.add(tc_id)
+
+    if not pending:
+        return 0
+    try:
+        agent.update_state(config, {"messages": pending})
+    except Exception:
+        return 0
+    return len(pending)
