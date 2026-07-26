@@ -16,6 +16,7 @@ from shellie.shell import close_shell, interrupt_shell, system_shell_env
 from shellie.tools import clear_approved_commands
 from shellie.web_fetch import clear_web_fetch_cache
 from shellie.session_memory import (
+    RepairResult,
     clear_session,
     repair_dangling_tool_calls,
     session_message_count,
@@ -88,6 +89,18 @@ def _latest_reply(new_messages: list) -> str | None:
     return None
 
 
+def _format_repair_notice(result: RepairResult, *, when: str) -> str | None:
+    """User-facing line for a session repair attempt, or None if nothing to say."""
+    parts: list[str] = []
+    if result.closed:
+        parts.append(f"closed {result.closed} incomplete tool call(s) {when}")
+    if result.error:
+        parts.append(result.error)
+    if not parts:
+        return None
+    return "(" + " — ".join(parts) + ")"
+
+
 def _warn_missing_env(project_root: Path) -> None:
     env_file = project_root / ".env"
     if not env_file.is_file():
@@ -121,6 +134,18 @@ def _format_run_error(exc: BaseException) -> str:
             "Try again in a moment."
         )
     return f"Error: {first}"
+
+
+def _is_dangling_tool_call_error(exc: BaseException) -> bool:
+    """True when the provider rejected history missing ToolMessages for tool_calls."""
+    text = str(exc).lower()
+    if "tool_call_id" in text:
+        return True
+    if "tool_calls" in text and "tool message" in text:
+        return True
+    if "must be followed by tool messages" in text:
+        return True
+    return False
 
 
 def _split_command_args(rest: str) -> list[str]:
@@ -304,8 +329,9 @@ def run_repl(project_root: Path) -> None:
 
         # Heal sessions left with AIMessage tool_calls and no ToolMessages (e.g. old Ctrl+C).
         healed = repair_dangling_tool_calls(agent, session_config)
-        if healed:
-            print(f"(closed {healed} incomplete tool call(s) from a prior interrupt)")
+        notice = _format_repair_notice(healed, when="from a prior interrupt")
+        if notice:
+            print(notice)
 
         prev_count = session_message_count(agent, session_config)
 
@@ -342,60 +368,100 @@ def run_repl(project_root: Path) -> None:
 
         working_show()
         run_error: str | None = None
-        try:
-            for chunk in agent.stream(
-                {"messages": [HumanMessage(content=message_content)]},
-                config=session_config,
-                stream_mode=["updates", "messages", "values"],
-            ):
-                mode, payload = chunk
-                if mode == "updates":
-                    _print_stream_updates(payload)
-                elif mode == "messages":
-                    token, _metadata = payload
-                    # Tool results also arrive on this channel — never print them.
-                    if not _is_ai_stream_token(token):
-                        continue
+        stream_input: dict | None = {
+            "messages": [HumanMessage(content=message_content)]
+        }
+        retried_after_repair = False
 
-                    tid = getattr(token, "id", None)
-                    if tid != msg_id:
-                        # Previous model call finished. If it had no tools, that text is the answer
-                        # (casual chat, or the final message after a tool loop).
-                        if msg_id is not None and not msg_is_tool:
-                            flush_pending()
-                        msg_id = tid
-                        msg_is_tool = False
-                        pending_text = []
+        while True:
+            try:
+                for chunk in agent.stream(
+                    stream_input,
+                    config=session_config,
+                    stream_mode=["updates", "messages", "values"],
+                ):
+                    mode, payload = chunk
+                    if mode == "updates":
+                        _print_stream_updates(payload)
+                    elif mode == "messages":
+                        token, _metadata = payload
+                        # Tool results also arrive on this channel — never print them.
+                        if not _is_ai_stream_token(token):
+                            continue
 
-                    tool_chunks = getattr(token, "tool_call_chunks", None) or []
-                    tool_calls = getattr(token, "tool_calls", None) or []
-                    if tool_chunks or tool_calls:
-                        msg_is_tool = True
-                        pending_text = []
-                        continue
+                        tid = getattr(token, "id", None)
+                        if tid != msg_id:
+                            # Previous model call finished. If it had no tools, that text
+                            # is the answer (casual chat, or final message after tools).
+                            if msg_id is not None and not msg_is_tool:
+                                flush_pending()
+                            msg_id = tid
+                            msg_is_tool = False
+                            pending_text = []
 
-                    text = _chunk_text(getattr(token, "content", None))
-                    if not text or msg_is_tool:
-                        continue
+                        tool_chunks = getattr(token, "tool_call_chunks", None) or []
+                        tool_calls = getattr(token, "tool_calls", None) or []
+                        if tool_chunks or tool_calls:
+                            msg_is_tool = True
+                            pending_text = []
+                            continue
 
-                    # Hold until this message ends without tools (same before and after tool rounds).
-                    pending_text.append(text)
-                elif mode == "values":
-                    final_state = payload
+                        text = _chunk_text(getattr(token, "content", None))
+                        if not text or msg_is_tool:
+                            continue
 
-            # End of stream: flush a no-tool answer that never got a msg_id change.
-            if not msg_is_tool:
-                flush_pending()
-        except KeyboardInterrupt:
-            interrupt_shell()
-            closed = repair_dangling_tool_calls(agent, session_config)
-            run_error = "Interrupted."
-            if closed:
-                run_error += f" (closed {closed} open tool call(s) so chat can continue)"
-        except Exception as exc:
-            run_error = _format_run_error(exc)
-        finally:
-            working_clear()
+                        # Hold until this message ends without tools.
+                        pending_text.append(text)
+                    elif mode == "values":
+                        final_state = payload
+
+                # End of stream: flush a no-tool answer that never got a msg_id change.
+                if not msg_is_tool:
+                    flush_pending()
+                break
+            except KeyboardInterrupt:
+                interrupt_shell()
+                repaired = repair_dangling_tool_calls(agent, session_config)
+                run_error = "Interrupted."
+                notice = _format_repair_notice(
+                    repaired, when="so chat can continue"
+                )
+                if notice:
+                    run_error += f" {notice}"
+                break
+            except Exception as exc:
+                if retried_after_repair or not _is_dangling_tool_call_error(exc):
+                    run_error = _format_run_error(exc)
+                    if _is_dangling_tool_call_error(exc):
+                        run_error += " Session may be broken — try /clear."
+                    break
+
+                repaired = repair_dangling_tool_calls(agent, session_config)
+                notice = _format_repair_notice(
+                    repaired, when="after a tool-call history error"
+                )
+                if notice:
+                    print(notice)
+
+                if repaired.remaining != 0 or repaired.closed == 0:
+                    run_error = _format_run_error(exc)
+                    run_error += " Session may be broken — try /clear."
+                    break
+
+                # HumanMessage already in the checkpoint from the failed turn —
+                # resume without appending it again.
+                print("(retrying after session repair)")
+                retried_after_repair = True
+                stream_input = None
+                reply_open = False
+                msg_id = None
+                msg_is_tool = False
+                pending_text = []
+                final_state = None
+                working_show()
+                continue
+
+        working_clear()
 
         if run_error is not None:
             if reply_open:

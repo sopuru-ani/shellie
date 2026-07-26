@@ -168,6 +168,13 @@ SOURCE_EDIT_VIA_SHELL_PATTERNS = [
     ),
 ]
 
+# Bash/Unix heredocs hang cmd.exe (Shellie's persistent Windows shell).
+# e.g. python - <<PY ... PY   or   cat <<'EOF'
+BASH_HEREDOC_PATTERNS = [
+    re.compile(r"<<-?\s*['\"]?\w+['\"]?"),
+    re.compile(r"<<\s*['\"]?\w+['\"]?"),
+]
+
 
 def _is_sensitive_command(command: str) -> bool:
     return any(pattern.search(command) for pattern in SENSITIVE_COMMAND_PATTERNS)
@@ -175,6 +182,10 @@ def _is_sensitive_command(command: str) -> bool:
 
 def _is_source_edit_via_shell(command: str) -> bool:
     return any(pattern.search(command) for pattern in SOURCE_EDIT_VIA_SHELL_PATTERNS)
+
+
+def _is_bash_heredoc(command: str) -> bool:
+    return any(pattern.search(command) for pattern in BASH_HEREDOC_PATTERNS)
 
 
 def _source_edit_block_message(command: str) -> str:
@@ -186,6 +197,18 @@ def _source_edit_block_message(command: str) -> str:
         "or file_write only for a new file / explicit full rewrite.\n"
         "If file_edit failed, retry file_edit with the correct argument names — "
         "do not fall back to PowerShell -replace.\n\n"
+        f"command:\n{command}"
+    )
+
+
+def _heredoc_block_message(command: str) -> str:
+    return (
+        "exit_code: blocked\n\n"
+        "Command not run: bash/Unix heredocs (<<EOF, <<'PY', <<-TAG, etc.) are not "
+        "supported — on Windows they hang the persistent cmd.exe shell.\n"
+        "Use file_write for scripts, a short one-liner, or PowerShell here-strings "
+        "only when appropriate. Prefer MCP tools / web_fetch over reinventing API "
+        "calls in a heredoc.\n\n"
         f"command:\n{command}"
     )
 
@@ -274,10 +297,16 @@ def terminal_run(command: str) -> str:
     until the user types 'yes' at an interactive prompt.
 
     Do NOT use this to edit source files (no Set-Content, Add-Content, >>, sed -i).
-    Use file_edit or file_write for code changes."""
+    Use file_edit or file_write for code changes.
+
+    Do NOT use bash heredocs (python - <<PY, cat <<EOF) — they hang on Windows."""
     if _is_interactive_command(command):
         shell_blocked("interactive", command)
         return _interactive_block_message(command)
+
+    if _is_bash_heredoc(command):
+        shell_blocked("heredoc", command)
+        return _heredoc_block_message(command)
 
     if _is_source_edit_via_shell(command):
         shell_blocked("source-edit", command)
