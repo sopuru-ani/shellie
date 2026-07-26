@@ -331,8 +331,8 @@ def _mcp_system_prompt(connected: list[str], *, mcp_client: bool) -> str:
      PowerShell / bash heredocs.
   4. Secrets for that server: ~/.config/shellie/mcp_servers/<name>/.env (server loads them),
      not mcp_custom.json / mcp_custom_catalog.json.
-  5. Register with register_custom_mcp_server(name, command, args) using absolute paths.
-     That writes the catalog entry AND enables the server. Never create/edit
+  5. Register with register_custom_mcp_server(name, command, server_args) using absolute
+     paths. That writes the catalog entry AND enables the server. Never create/edit
      mcp_custom_catalog.json or mcp_custom.json with file_write / shell — this tool owns them.
      If the name already exists, pick a different name (no overwrite).
   6. Tell the user to restart Shellie (and ensure MCP_ENABLED=1 / shellie-mcp on) so tools load.

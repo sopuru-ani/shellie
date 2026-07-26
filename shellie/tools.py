@@ -33,6 +33,7 @@ from shellie.ui import (
     commands_approved,
     commands_rejected,
     bold_text,
+    preview_command,
 )
 
 _approved_commands: set[str] = set()
@@ -590,7 +591,7 @@ def file_write(filepath: str, content: str) -> str:
 def register_custom_mcp_server(
     name: str,
     command: str,
-    args: list[str],
+    server_args: list[str],
     description: str = "",
     cwd: str = "",
 ) -> str:
@@ -599,7 +600,7 @@ def register_custom_mcp_server(
     Call this AFTER server.py and the venv exist. Pass absolute paths:
     - name: server id (e.g. weather). Must not already exist or collide with curated ids.
     - command: absolute path to that server's venv python (python.exe on Windows).
-    - args: usually a one-element list with the absolute path to server.py.
+    - server_args: usually a one-element list with the absolute path to server.py.
     Optional description / cwd. Enables the server in mcp_custom.json.
     On success, tell the user to restart Shellie. Do not edit mcp_custom_catalog.json
     or mcp_custom.json with file_write — this tool owns those files.
@@ -607,7 +608,7 @@ def register_custom_mcp_server(
     return register_new_custom_server(
         name,
         command,
-        args,
+        server_args,
         description=description or None,
         cwd=cwd or None,
     )
@@ -1441,7 +1442,8 @@ def request_shell_approval(request: list[str]) -> str:
     if not commands:
         return "Error: No commands provided."
     request_commands_approval(
-        "Requesting approval for:\n" + "\n".join(f"  {c}" for c in commands)
+        "Requesting approval for:\n"
+        + "\n".join(f"  {preview_command(c)}" for c in commands)
     )
     answer = input(bold_text("yes to approve or no to reject: ")).strip().lower()
     while answer not in {"yes", "no"}:

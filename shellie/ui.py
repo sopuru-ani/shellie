@@ -16,6 +16,25 @@ _WORKING_LABEL = "shellie is working..."
 _working_visible = False
 _reply_active = False
 
+# Display-only truncation for long shell strings (approval / activity lines).
+_CMD_PREVIEW_HEAD = 240
+_CMD_PREVIEW_TAIL = 80
+
+
+def preview_command(
+    command: str,
+    *,
+    head: int = _CMD_PREVIEW_HEAD,
+    tail: int = _CMD_PREVIEW_TAIL,
+) -> str:
+    """Head + tail preview for the terminal. Does not change the real command."""
+    text = command if isinstance(command, str) else str(command)
+    flat = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+    if len(flat) <= head + tail + 20:
+        return flat
+    omitted = len(flat) - head - tail
+    return f"{flat[:head]} …(+{omitted} chars)… {flat[-tail:]}"
+
 
 def _use_color() -> bool:
     return sys.stdout.isatty()
@@ -67,12 +86,13 @@ def agent_calling_tool(name: str, args: dict) -> None:
 
 
 def shell_running(command: str) -> None:
-    _activity_line(_c(_YELLOW, "  ▸ shell") + f"  $ {command}")
+    _activity_line(_c(_YELLOW, "  ▸ shell") + f"  $ {preview_command(command)}")
 
 
 def shell_blocked(reason: str, command: str) -> None:
     _activity_line(
-        _c(_RED, f"  ✗ blocked ({reason})") + _c(_DIM, f"  $ {command}")
+        _c(_RED, f"  ✗ blocked ({reason})")
+        + _c(_DIM, f"  $ {preview_command(command)}")
     )
 
 
@@ -90,7 +110,7 @@ def shell_done(exit_code: int, line_count: int) -> None:
 def confirm_sensitive(command: str) -> None:
     working_clear()
     print(_c(_YELLOW, "\n⚠ sensitive command — approval required"))
-    print(f"  {command}")
+    print(f"  {preview_command(command)}")
 
 
 def confirm_prompt() -> str:
