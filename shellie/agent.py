@@ -350,7 +350,14 @@ def _skills_system_prompt(result: DiscoverResult) -> str:
     if not result.skills:
         return ""
     lines = [
-        "- Available skills (call activate_skill(name) when a task matches):",
+        "- Skills (specialized procedures — use them; do not assume you already know best):",
+        "  You are a generalist. For specialized work (UI/design, domain workflows, etc.),",
+        "  do NOT assume your default approach is enough. If an available skill's description",
+        "  matches the task, call activate_skill(name) BEFORE acting (before file_edit /",
+        "  file_write / big terminal plans for that work), then follow those instructions.",
+        "  Skills replace your default procedure — they are not optional polish after you finish.",
+        "  Skip skills only for casual chat or tasks no skill description covers.",
+        "  Available:",
     ]
     for record in sorted(result.skills.values(), key=lambda r: r.name):
         lines.append(f"  - {record.name}: {record.description}")
