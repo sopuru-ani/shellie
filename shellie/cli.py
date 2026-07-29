@@ -11,6 +11,7 @@ from shellie.cognee_memory import cognee_status_message, init_cognee_memory
 from shellie.config import bootstrap
 from shellie.images import encode_image_ref, looks_like_image_ref
 from shellie.mcp import mcp_status_message
+from shellie.skills import skills_status_message
 from shellie.paths import DEVICE_CONFIG_DIR, project_agent_dir, project_session_db
 from shellie.shell import close_shell, interrupt_shell, system_shell_env
 from shellie.tools import clear_approved_commands
@@ -199,12 +200,12 @@ def _build_message_content(query: str, pending_images: list[str]):
 
 
 def run_repl(project_root: Path) -> None:
-    agent, session_config, checkpointer, thread_id, mcp = build_agent(project_root)
+    agent, session_config, checkpointer, thread_id, mcp, skills = build_agent(project_root)
 
     pending_images: list[str] = []
 
     print("Tool and shell activity print as they run. Set AGENT_DEBUG=1 for raw LangChain logs.\n")
-    print("Commands: /shell, /shell <cmd>, /chat (in shell mode), /clear, /bye")
+    print("Commands: /shell, /shell <cmd>, /chat (in shell mode), /clear, /skills, /bye")
     print("Images:   /image <path|url> [question], /attach <path|url>, /images, /images clear, /detach <n>\n")
     print(f"Project root:  {project_root}")
     print(f"Config:        {project_root / '.env'}")
@@ -214,6 +215,10 @@ def run_repl(project_root: Path) -> None:
     print(f"MCP:           {mcp_status_message()}")
     if mcp.connected or mcp.errors:
         print(f"               {mcp.summary()}")
+    print(f"Skills:        {skills_status_message(skills)}")
+    if skills.failed:
+        for path, reason in skills.failed:
+            print(f"               warning: {path} — {reason}")
     stored = session_message_count(agent, session_config)
     if stored:
         print(f"Session:       resuming ({stored} messages in {project_session_db(project_root).name})")
@@ -293,6 +298,14 @@ def run_repl(project_root: Path) -> None:
                 # Attach only; wait for the next message to ask.
                 continue
             query = question
+
+        if stripped == "/skills":
+            if skills.skills:
+                for name in sorted(skills.skills):
+                    print(name)
+            else:
+                print("No skills available.")
+            continue
 
         if query.strip() == "/shell":
             print("Shell mode - type /chat to return to chat mode. Each line runs in a fresh subshell")

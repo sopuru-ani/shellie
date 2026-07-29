@@ -22,6 +22,7 @@ dependencies = [
     "ruff",
     "httpx",
     "beautifulsoup4",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
@@ -38,4 +39,4 @@ where = ["."]
 include = ["shellie*"]
 
 [tool.setuptools.package-data]
-shellie = ["lint_configs/*"]
+shellie = ["lint_configs/*", "skills/builtin/**"]

@@ -16,7 +16,9 @@ from shellie.session_memory import (
     project_thread_id,
     session_config,
 )
+from shellie.skills import DiscoverResult, discover_skills, skills_status_message
 from shellie.tools import (
+    activate_skill,
     file_edit,
     file_grep,
     file_read,
@@ -28,6 +30,7 @@ from shellie.tools import (
     register_custom_mcp_server,
     request_shell_approval,
     search_tool,
+    set_skill_map,
     terminal_run,
     web_fetch,
     wikipedia_tool,
@@ -131,7 +134,7 @@ STRICT TOOL RULES — read first, always follow:
   After the user reports a bug in code you wrote, update with file_edit (file already
   exists) — do not leave the fix only in the chat reply. Never print fake tool markup
   like <TOOLCALL>... in chat — either call the real tool or explain in plain language.
-{cognee_section}{mcp_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
+{cognee_section}{mcp_section}{skills_section}- If unsure whether a tool is needed for casual chat: do not call it. Reply or ask.
   If unsure about code, APIs, project files, or local system/file questions: use tools
   (file_read / file_grep / file_edit / file_write / read_lint / search / web_fetch /
   terminal_run).
@@ -342,24 +345,39 @@ def _mcp_system_prompt(connected: list[str], *, mcp_client: bool) -> str:
 """
 
 
+def _skills_system_prompt(result: DiscoverResult) -> str:
+    """Return a catalog section for the system prompt, or empty string if no skills."""
+    if not result.skills:
+        return ""
+    lines = [
+        "- Available skills (call activate_skill(name) when a task matches):",
+    ]
+    for record in sorted(result.skills.values(), key=lambda r: r.name):
+        lines.append(f"  - {record.name}: {record.description}")
+    return "\n".join(lines) + "\n"
+
+
 def build_system_prompt(
     *,
     cognee: bool,
     mcp_connected: list[str] | None = None,
     mcp_client: bool = False,
+    skills: DiscoverResult | None = None,
 ) -> str:
     cognee_section = _COGNEE_SYSTEM_PROMPT if cognee else ""
     mcp_section = _mcp_system_prompt(
         mcp_connected or [],
         mcp_client=mcp_client,
     )
+    skills_section = _skills_system_prompt(skills) if skills else ""
     return _BASE_SYSTEM_PROMPT.format(
         cognee_section=cognee_section,
         mcp_section=mcp_section,
+        skills_section=skills_section,
     )
 
 
-def build_tools(*, cognee: bool) -> list:
+def build_tools(*, cognee: bool, skills: DiscoverResult | None = None) -> list:
     """Build the tools for the agent."""
     tools = [
         search_tool,
@@ -383,6 +401,8 @@ def build_tools(*, cognee: bool) -> list:
                 recall_device,
             ]
         )
+    if skills and skills.skills:
+        tools.append(activate_skill)
     return tools
 
 
@@ -447,7 +467,7 @@ def _build_llm():
 def build_agent(project_root: Path) -> tuple:
     """Create the LangChain agent and session handles for one project.
 
-    Returns (agent, config, checkpointer, thread_id, mcp_load_result).
+    Returns (agent, config, checkpointer, thread_id, mcp_load_result, skills_result).
     """
     agent_debug = os.getenv("AGENT_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -457,8 +477,10 @@ def build_agent(project_root: Path) -> tuple:
     config = session_config(thread_id)
     cognee = cognee_memory_enabled()
     mcp = load_mcp_tools()
+    skills = discover_skills(project_root)
+    set_skill_map(skills.skills)
 
-    tools = build_tools(cognee=cognee)
+    tools = build_tools(cognee=cognee, skills=skills)
     tools.extend(mcp.tools)
 
     agent = create_agent(
@@ -468,6 +490,7 @@ def build_agent(project_root: Path) -> tuple:
             cognee=cognee,
             mcp_connected=mcp.connected,
             mcp_client=mcp_enabled(),
+            skills=skills,
         ),
         debug=agent_debug,
         checkpointer=checkpointer,
@@ -479,4 +502,4 @@ def build_agent(project_root: Path) -> tuple:
         ],
     )
 
-    return agent, config, checkpointer, thread_id, mcp
+    return agent, config, checkpointer, thread_id, mcp, skills

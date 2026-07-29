@@ -1483,3 +1483,94 @@ def request_shell_approval(request: list[str]) -> str:
         return "Commands approved:\n" + "\n".join(commands)
     commands_rejected()
     return "Commands rejected:\n" + "\n".join(commands) + "\n\n Ask the user what commands they want instead and then try again."
+
+
+# ---------------------------------------------------------------------------
+# Skills
+# ---------------------------------------------------------------------------
+
+# Populated at startup by agent.py after discover_skills().
+# Maps skill name → SkillRecord.  Only set when skills are available.
+_skill_map: dict = {}
+
+
+def set_skill_map(skill_map: dict) -> None:
+    """Install the discovery map so activate_skill can resolve names."""
+    global _skill_map
+    _skill_map = skill_map
+
+
+@tool
+def activate_skill(name: str) -> str:
+    """Load the full instructions for a skill by name.
+
+    Call this when a user's task matches a skill description from the
+    available skills catalog. Returns the skill's instructions, the absolute
+    path to its directory (for resolving bundled scripts or references), and
+    a manifest of any bundled files. Do not call this for small talk or tasks
+    that don't match a skill description.
+
+    Args:
+        name: Exact skill name as listed in the catalog (e.g. "frontend-design").
+    """
+    if not _skill_map:
+        return "Error: no skills are loaded this session."
+
+    record = _skill_map.get(name)
+    if record is None:
+        available = ", ".join(sorted(_skill_map))
+        return (
+            f"Error: skill {name!r} not found. "
+            f"Available skills: {available}"
+        )
+
+    location: Path = record.location
+    if not location.is_file():
+        return (
+            f"Error: skill file for {name!r} is missing at {location}. "
+            "The skill may have been moved or deleted. Ask the user to restart Shellie."
+        )
+
+    try:
+        text = location.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"Error: could not read skill {name!r}: {exc}"
+
+    # Strip YAML frontmatter — return body only.
+    body = text
+    if text.startswith("---"):
+        first_nl = text.find("\n")
+        if first_nl != -1:
+            rest = text[first_nl + 1:]
+            end = rest.find("\n---")
+            if end != -1:
+                body = rest[end + 4:].lstrip("\n")
+
+    # Build resource manifest (files in skill dir, excluding SKILL.md itself).
+    skill_dir = location.parent
+    resources: list[str] = []
+    try:
+        for entry in sorted(skill_dir.rglob("*")):
+            if entry.is_file() and entry.name != "SKILL.md":
+                resources.append(str(entry.relative_to(skill_dir)))
+    except OSError:
+        pass
+
+    manifest_section = ""
+    if resources:
+        manifest_lines = "\n".join(f"  {r}" for r in resources)
+        manifest_section = (
+            f"\n\n<skill_resources>\n"
+            f"Bundled files (use file_read with absolute paths when instructions reference them):\n"
+            f"{manifest_lines}\n"
+            f"</skill_resources>"
+        )
+
+    return (
+        f"<skill_content name=\"{name}\" source=\"{record.source}\">\n"
+        f"{body}\n"
+        f"Skill directory: {skill_dir}\n"
+        f"Resolve relative paths in this skill against the skill directory above."
+        f"{manifest_section}\n"
+        f"</skill_content>"
+    )
