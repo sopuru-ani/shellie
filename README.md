@@ -294,6 +294,12 @@ Chat input at `~>` does **not** run shell commands — the agent must call `term
 
 Set `AGENT_DEBUG=1` in your project `.env` for raw LangChain logs.
 
+To raise the per-turn step limit (model calls + tool rounds) when you hit “step limit” / recursion errors, set `AGENT_RECURSION_LIMIT` (default **40**):
+
+```dotenv
+AGENT_RECURSION_LIMIT=80
+```
+
 ---
 
 ## Memory
@@ -331,9 +337,27 @@ Quit with `/bye`, restart, and ask about your package manager. If it recalls the
 | `file_grep` | Search file contents (pattern + optional path/glob) |
 | `search` / `wikipedia` / `web_fetch` | External lookup when needed |
 | `remember_*` / `recall_*` | Long-term Cognee memory |
+| `activate_skill` | Load full instructions for a discovered skill by name |
 | `github_*` / `<server>_*` | MCP tools when installed, servers enabled, and `MCP_ENABLED=1` (curated + custom) |
 
 Interactive commands (`gh auth login`, `ssh`, editors, REPLs) are blocked — use `/shell` instead. Sensitive commands (`git push`, `rm`, `sudo`, package installs) require typing `yes` at a prompt.
+
+---
+
+## Skills
+
+Agent Skills (`SKILL.md`) give Shellie specialized procedures on demand. At startup it loads only each skill’s **name** and **description**; the agent calls `activate_skill` to load the full body.
+
+**Built-in** (shipped with Shellie): `frontend-design`, `research-build`.
+
+**Also scanned** (first match wins — project before device before built-in):
+
+| Scope | Paths |
+|-------|--------|
+| Project (needs `SKILLS_TRUST_PROJECT=1`) | `.shellie/skills/`, `.claude/skills/`, `.agents/skills/` |
+| Device | `~/.config/shellie/skills/`, `~/.claude/skills/`, `~/.agents/skills/` |
+
+`/skills` lists available names. `research-build` stores notes under `.shellie/research/` (keep `.shellie/` gitignored).
 
 ---
 
