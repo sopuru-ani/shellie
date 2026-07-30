@@ -27,7 +27,12 @@ dependencies = [
 
 [project.optional-dependencies]
 cognee = ["cognee"]
-mcp = ["langchain-mcp-adapters"]
+# mcp SDK v2 removed mcp.shared.context.RequestContext; langchain-mcp-adapters
+# still imports the v1 symbol — keep mcp on 1.x until adapters catch up.
+mcp = [
+    "langchain-mcp-adapters",
+    "mcp>=1,<2",
+]
 lint = ["yamllint"]
 
 [project.scripts]
